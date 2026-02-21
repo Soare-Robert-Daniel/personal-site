@@ -1,0 +1,17 @@
+---
+interface Props {
+	text: string;
+	tag?: string;
+	class?: string;
+}
+
+const { text, tag: Tag = 'span', class: className } = Astro.props;
+
+const glitchChars = '@#$%&*!?/|<>~^+=_';
+const scrambled = text
+	.split('')
+	.map((c) => (c === ' ' ? ' ' : glitchChars[Math.floor(Math.random() * glitchChars.length)]))
+	.join('');
+---
+
+<Tag class={className} data-glitch data-text={text} set:html={scrambled} />

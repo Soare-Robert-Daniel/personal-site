@@ -3,6 +3,7 @@ import BaseHead from '../components/BaseHead.astro';
 import Footer from '../components/Footer.astro';
 import Header from '../components/Header.astro';
 import AsciiWave from '../components/AsciiWave.astro';
+import GlitchText from '../components/GlitchText.astro';
 import { SITE_DESCRIPTION, SITE_TITLE } from '../consts';
 ---
 
@@ -15,10 +16,10 @@ import { SITE_DESCRIPTION, SITE_TITLE } from '../consts';
 		<Header />
 		<main>
 			<section class="hero">
-				<h1 data-glitch>Hello, I'm Robert Soare</h1>
-				<p class="role" data-glitch>Software Developer</p>
+				<GlitchText tag="h1" text="Hello, I'm Robert Soare" />
+				<GlitchText tag="p" text="Software Developer" class="role" />
 				<p>
-					Building products for the WordPress ecosystem that help small business owners and freelancers. Currently at <strong>Themeisle</strong>, serving almost <strong>1 million users</strong>.
+					Building products for the WordPress ecosystem that help small business owners and freelancers. Currently at <a href="https://themeisle.com/" target="_blank"><strong>Themeisle</strong></a>, serving almost <strong>1 million users</strong>.
 				</p>
 			</section>
 
@@ -54,11 +55,11 @@ import { SITE_DESCRIPTION, SITE_TITLE } from '../consts';
 	.hero {
 		margin-bottom: 3rem;
 	}
-	.hero h1 {
+	.hero :global(h1) {
 		font-size: 2.5rem;
 		margin-bottom: 0.5rem;
 	}
-	.role {
+	.hero :global(.role) {
 		color: var(--accent);
 		font-size: 1.1rem;
 		margin-bottom: 1rem;
@@ -84,24 +85,24 @@ import { SITE_DESCRIPTION, SITE_TITLE } from '../consts';
 </style>
 
 <script>
-	const glitchChars = '█▓▒░@#$%&*!?/\\|<>';
+	const glitchChars = '@#$%&*!?/|<>~^+=_';
 
 	function randomChar() {
 		return glitchChars[Math.floor(Math.random() * glitchChars.length)];
 	}
 
-	function glitch(el: Element, delay: number) {
-		const text = el.textContent || '';
-		const len = text.length;
-		const resolved = new Array(len).fill(false);
-		const display = text.split('').map((c) => (c === ' ' ? ' ' : randomChar()));
-		el.textContent = display.join('');
+	function decode(el: Element): Promise<void> {
+		return new Promise((done) => {
+			const text = (el as HTMLElement).dataset.text || '';
+			const len = text.length;
 
-		const iterations = 24;
-		let frame = 0;
-		const charDelay = 5;
+			const resolved = text.split('').map((c) => c === ' ');
+			const display = (el.textContent || '').split('');
 
-		setTimeout(() => {
+			const iterations = 24;
+			let frame = 0;
+			const charDelay = 5;
+
 			function step() {
 				frame++;
 				for (let i = 0; i < len; i++) {
@@ -114,14 +115,17 @@ import { SITE_DESCRIPTION, SITE_TITLE } from '../consts';
 					}
 				}
 				el.textContent = display.join('');
-				if (resolved.every(Boolean)) return;
+				if (resolved.every(Boolean)) { done(); return; }
 				requestAnimationFrame(step);
 			}
 			requestAnimationFrame(step);
-		}, delay);
+		});
 	}
 
-	document.querySelectorAll('[data-glitch]').forEach((el, i) => {
-		glitch(el, i * 400);
-	});
+	const els = document.querySelectorAll('[data-glitch]');
+	(async () => {
+		for (const el of els) {
+			await decode(el);
+		}
+	})();
 </script>
