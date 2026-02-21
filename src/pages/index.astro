@@ -13,37 +13,69 @@ import { SITE_DESCRIPTION, SITE_TITLE } from '../consts';
 	<body>
 		<Header />
 		<main>
-			<h1>🧑‍🚀 Hello, Astronaut!</h1>
-			<p>
-				Welcome to the official <a href="https://astro.build/">Astro</a> blog starter template. This template
-				serves as a lightweight, minimally-styled starting point for anyone looking to build a personal
-				website, blog, or portfolio with Astro.
-			</p>
-			<p>
-				This template comes with a few integrations already configured in your
-				<code>astro.config.mjs</code> file. You can customize your setup with
-				<a href="https://astro.build/integrations">Astro Integrations</a> to add tools like Tailwind,
-				React, or Vue to your project.
-			</p>
-			<p>Here are a few ideas on how to get started with the template:</p>
-			<ul>
-				<li>Edit this page in <code>src/pages/index.astro</code></li>
-				<li>Edit the site header items in <code>src/components/Header.astro</code></li>
-				<li>Add your name to the footer in <code>src/components/Footer.astro</code></li>
-				<li>Check out the included blog posts in <code>src/content/blog/</code></li>
-				<li>Customize the blog post page layout in <code>src/layouts/BlogPost.astro</code></li>
-			</ul>
-			<p>
-				Have fun! If you get stuck, remember to
-				<a href="https://docs.astro.build/">read the docs</a>
-				or <a href="https://astro.build/chat">join us on Discord</a> to ask questions.
-			</p>
-			<p>
-				Looking for a blog template with a bit more personality? Check out
-				<a href="https://github.com/Charca/astro-blog-template">astro-blog-template</a>
-				by <a href="https://twitter.com/Charca">Maxi Ferreira</a>.
-			</p>
+			<section class="hero">
+				<h1>Hello, I'm Robert Soare</h1>
+				<p class="role">Software Developer</p>
+				<p>
+					Building products for the WordPress ecosystem that help small business owners and freelancers. Currently at <strong>Themeisle</strong>, serving almost <strong>1 million users</strong>.
+				</p>
+			</section>
+
+			<section class="section">
+				<h2 class="section-title">Tech Stack</h2>
+				<div class="skills">
+					<span class="skill-tag">PHP</span>
+					<span class="skill-tag">Node.js</span>
+					<span class="skill-tag">Bun</span>
+					<span class="skill-tag">WordPress</span>
+					<span class="skill-tag">React</span>
+					<span class="skill-tag">TypeScript</span>
+					<span class="skill-tag">AWS</span>
+					<span class="skill-tag">MySQL</span>
+					<span class="skill-tag">Docker</span>
+					<span class="skill-tag">Tailwind</span>
+				</div>
+			</section>
+
+			<section class="section">
+				<h2 class="section-title">Get In Touch</h2>
+				<p>Interested in working together?</p>
+				<a href="https://www.linkedin.com/in/soare-robert-daniel-949974151/" target="_blank" class="cta-button">Let's Connect on LinkedIn</a>
+			</section>
 		</main>
 		<Footer />
 	</body>
 </html>
+
+<style>
+	.hero {
+		margin-bottom: 3rem;
+	}
+	.hero h1 {
+		font-size: 2.5rem;
+		margin-bottom: 0.5rem;
+	}
+	.role {
+		color: var(--accent);
+		font-size: 1.1rem;
+		margin-bottom: 1rem;
+	}
+	.skills {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 0.5rem;
+	}
+	.cta-button {
+		display: inline-block;
+		padding: 0.75rem 1.5rem;
+		background: var(--accent);
+		color: var(--bg-dark);
+		border-radius: 8px;
+		font-weight: 600;
+		transition: all 0.2s ease;
+	}
+	.cta-button:hover {
+		filter: drop-shadow(0 0 10px var(--glow));
+		transform: translateY(-2px);
+	}
+</style>
