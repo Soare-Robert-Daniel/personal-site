@@ -1,0 +1,80 @@
+---
+---
+
+<div class="ascii-wave-container">
+	<canvas id="ascii-wave"></canvas>
+</div>
+
+<style>
+	.ascii-wave-container {
+		width: 100%;
+		height: 200px;
+		margin: 2rem 0;
+		overflow: hidden;
+	}
+	#ascii-wave {
+		width: 100%;
+		height: 100%;
+		display: block;
+	}
+</style>
+
+<script>
+	const canvas = document.getElementById('ascii-wave') as HTMLCanvasElement;
+	const ctx = canvas.getContext('2d')!;
+	const chars = ' .·:+*#█';
+	const fontSize = 14;
+	const cyan = [0, 240, 255];
+
+	let cols = 0;
+	let rows = 0;
+	let animId: number;
+
+	function resize() {
+		const rect = canvas.getBoundingClientRect();
+		const dpr = window.devicePixelRatio || 1;
+		canvas.width = rect.width * dpr;
+		canvas.height = rect.height * dpr;
+		ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+		cols = Math.floor(rect.width / (fontSize * 0.6));
+		rows = Math.floor(rect.height / fontSize);
+	}
+
+	function draw(time: number) {
+		const t = time * 0.001;
+		const rect = canvas.getBoundingClientRect();
+		ctx.clearRect(0, 0, rect.width, rect.height);
+		ctx.font = `${fontSize}px "JetBrains Mono", monospace`;
+		ctx.textBaseline = 'top';
+
+		for (let y = 0; y < rows; y++) {
+			for (let x = 0; x < cols; x++) {
+				const nx = x / cols;
+				const ny = y / rows;
+				const v =
+					Math.sin(nx * 6 + t * 1.2) * 0.5 +
+					Math.sin(ny * 4 + t * 0.8) * 0.3 +
+					Math.sin((nx + ny) * 5 + t * 1.5) * 0.2;
+				const normalized = (v + 1) / 2;
+				const charIndex = Math.floor(normalized * (chars.length - 1));
+				const alpha = 0.08 + normalized * 0.45;
+
+				ctx.fillStyle = `rgba(${cyan[0]}, ${cyan[1]}, ${cyan[2]}, ${alpha})`;
+				ctx.fillText(chars[charIndex], x * fontSize * 0.6, y * fontSize);
+			}
+		}
+
+		animId = requestAnimationFrame(draw);
+	}
+
+	resize();
+	animId = requestAnimationFrame(draw);
+
+	const ro = new ResizeObserver(() => resize());
+	ro.observe(canvas);
+
+	document.addEventListener('astro:before-swap', () => {
+		cancelAnimationFrame(animId);
+		ro.disconnect();
+	});
+</script>

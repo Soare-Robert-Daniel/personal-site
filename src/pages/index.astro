@@ -2,6 +2,7 @@
 import BaseHead from '../components/BaseHead.astro';
 import Footer from '../components/Footer.astro';
 import Header from '../components/Header.astro';
+import AsciiWave from '../components/AsciiWave.astro';
 import { SITE_DESCRIPTION, SITE_TITLE } from '../consts';
 ---
 
@@ -14,12 +15,14 @@ import { SITE_DESCRIPTION, SITE_TITLE } from '../consts';
 		<Header />
 		<main>
 			<section class="hero">
-				<h1>Hello, I'm Robert Soare</h1>
-				<p class="role">Software Developer</p>
+				<h1 data-glitch>Hello, I'm Robert Soare</h1>
+				<p class="role" data-glitch>Software Developer</p>
 				<p>
 					Building products for the WordPress ecosystem that help small business owners and freelancers. Currently at <strong>Themeisle</strong>, serving almost <strong>1 million users</strong>.
 				</p>
 			</section>
+
+			<AsciiWave />
 
 			<section class="section">
 				<h2 class="section-title">Tech Stack</h2>
@@ -79,3 +82,46 @@ import { SITE_DESCRIPTION, SITE_TITLE } from '../consts';
 		transform: translateY(-2px);
 	}
 </style>
+
+<script>
+	const glitchChars = '█▓▒░@#$%&*!?/\\|<>';
+
+	function randomChar() {
+		return glitchChars[Math.floor(Math.random() * glitchChars.length)];
+	}
+
+	function glitch(el: Element, delay: number) {
+		const text = el.textContent || '';
+		const len = text.length;
+		const resolved = new Array(len).fill(false);
+		const display = text.split('').map((c) => (c === ' ' ? ' ' : randomChar()));
+		el.textContent = display.join('');
+
+		const iterations = 24;
+		let frame = 0;
+		const charDelay = 5;
+
+		setTimeout(() => {
+			function step() {
+				frame++;
+				for (let i = 0; i < len; i++) {
+					if (resolved[i] || text[i] === ' ') continue;
+					if (frame > i * charDelay + iterations) {
+						display[i] = text[i];
+						resolved[i] = true;
+					} else if (frame > i * charDelay) {
+						display[i] = randomChar();
+					}
+				}
+				el.textContent = display.join('');
+				if (resolved.every(Boolean)) return;
+				requestAnimationFrame(step);
+			}
+			requestAnimationFrame(step);
+		}, delay);
+	}
+
+	document.querySelectorAll('[data-glitch]').forEach((el, i) => {
+		glitch(el, i * 400);
+	});
+</script>
