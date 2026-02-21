@@ -17,7 +17,7 @@ import { SITE_DESCRIPTION, SITE_TITLE } from '../consts';
 		<main>
 			<section class="hero">
 				<GlitchText tag="h1" text="Hello, I'm Robert Soare" />
-				<GlitchText tag="p" text="Software Developer" class="role" />
+				<p class="role">Software Developer</p>
 				<p>
 					Building products for the WordPress ecosystem that help small business owners and freelancers. Currently at <a href="https://themeisle.com/" target="_blank"><strong>Themeisle</strong></a>, serving almost <strong>1 million users</strong>.
 				</p>
@@ -85,7 +85,7 @@ import { SITE_DESCRIPTION, SITE_TITLE } from '../consts';
 </style>
 
 <script>
-	const glitchChars = '@#$%&*!?/|<>~^+=_';
+	const glitchChars = '@#$%&*!?/|~^+=_';
 
 	function randomChar() {
 		return glitchChars[Math.floor(Math.random() * glitchChars.length)];
@@ -99,9 +99,9 @@ import { SITE_DESCRIPTION, SITE_TITLE } from '../consts';
 			const resolved = text.split('').map((c) => c === ' ');
 			const display = (el.textContent || '').split('');
 
-			const iterations = 24;
+			const iterations = 12;
 			let frame = 0;
-			const charDelay = 5;
+			const charDelay = 2;
 
 			function step() {
 				frame++;

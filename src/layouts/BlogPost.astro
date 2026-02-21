@@ -22,6 +22,11 @@ const { title, description, pubDate, updatedDate, heroImage } = Astro.props;
 				padding: calc(var(--header-height) + 3rem) 1rem 3rem;
 				min-height: calc(100vh - var(--header-height));
 			}
+			@media (max-width: 600px) {
+				main {
+					padding-top: calc(var(--header-height) + 1.5rem);
+				}
+			}
 			.hero-image {
 				width: 100%;
 				margin-bottom: 2rem;
@@ -55,9 +60,11 @@ const { title, description, pubDate, updatedDate, heroImage } = Astro.props;
 		<Header />
 		<main>
 			<article>
-				<div class="hero-image">
-					{heroImage && <Image width={1020} height={510} src={heroImage} alt="" />}
-				</div>
+				{heroImage && (
+					<div class="hero-image">
+						<Image width={1020} height={510} src={heroImage} alt="" />
+					</div>
+				)}
 				<div class="prose">
 					<div class="title">
 						<div class="date">

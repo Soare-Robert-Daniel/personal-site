@@ -7,7 +7,7 @@ interface Props {
 
 const { text, tag: Tag = 'span', class: className } = Astro.props;
 
-const glitchChars = '@#$%&*!?/|<>~^+=_';
+const glitchChars = '@#$%&*!?/|~^+=_';
 const scrambled = text
 	.split('')
 	.map((c) => (c === ' ' ? ' ' : glitchChars[Math.floor(Math.random() * glitchChars.length)]))
