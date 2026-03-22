@@ -1,0 +1,95 @@
+---
+title: "Prompt Training: Double Pendulum"
+description: "Exploring the chaotic dynamics of the double pendulum — a deceptively simple system that produces wildly unpredictable motion."
+pubDate: "2026-02-22"
+aiGenerated: true
+aiConversationUrl: "https://ampcode.com/threads/T-019c860e-b1ba-75b3-b20b-d31b86b33d79"
+---
+
+import DoublePendulumVisualization from '../../components/DoublePendulumVisualization.astro';
+import Math from '../../components/Math.astro';
+
+Take a pendulum and hang another pendulum from its end. That's it — two rigid rods, two masses, and gravity. The **double pendulum** is one of the simplest mechanical systems that exhibits **chaotic behavior**. Small changes in starting position lead to completely different trajectories, making long-term prediction impossible despite the system being fully deterministic.
+
+## The System
+
+The double pendulum consists of two point masses $m_1$ and $m_2$ connected by rigid, massless rods of lengths $L_1$ and $L_2$. The first rod is attached to a fixed pivot, and the second rod hangs from the first mass. The system moves under gravity in a single vertical plane.
+
+We describe its state using two generalized coordinates: the angles $\theta_1$ and $\theta_2$ that each rod makes with the vertical.
+
+## Equations of Motion
+
+Using the **Lagrangian** $\mathcal{L} = T - V$, where the kinetic and potential energies are:
+
+<Math d="T = \tfrac{1}{2}(m_1+m_2)L_1^2\dot{\theta}_1^2 + \tfrac{1}{2}m_2 L_2^2\dot{\theta}_2^2 + m_2 L_1 L_2 \dot{\theta}_1\dot{\theta}_2\cos\Delta\theta" />
+
+<Math d="V = -(m_1+m_2)gL_1\cos\theta_1 - m_2 g L_2\cos\theta_2" />
+
+where $\Delta\theta = \theta_1 - \theta_2$. Applying the Euler–Lagrange equations gives the coupled accelerations:
+
+<Math d="\ddot{\theta}_1 = \frac{-g(2m_1+m_2)\sin\theta_1 - m_2 g\sin(\theta_1-2\theta_2) - 2\sin\Delta\theta\,m_2\!\left(\dot{\theta}_2^2 L_2 + \dot{\theta}_1^2 L_1\cos\Delta\theta\right)}{L_1\!\left(2m_1+m_2-m_2\cos 2\Delta\theta\right)}" />
+
+<Math d="\ddot{\theta}_2 = \frac{2\sin\Delta\theta\!\left(\dot{\theta}_1^2 L_1(m_1+m_2) + g(m_1+m_2)\cos\theta_1 + \dot{\theta}_2^2 L_2 m_2\cos\Delta\theta\right)}{L_2\!\left(2m_1+m_2-m_2\cos 2\Delta\theta\right)}" />
+
+These equations have no closed-form solution — numerical integration is the only way forward.
+
+## Interactive Visualization
+
+<DoublePendulumVisualization />
+
+## Numerical Integration
+
+The double pendulum requires a higher-order integrator — Euler's method accumulates too much energy error. Here's a **4th-order Runge–Kutta** implementation in Python:
+
+```python
+import numpy as np
+import matplotlib.pyplot as plt
+
+def derivs(state, L1=1.0, L2=1.0, m1=1.0, m2=1.0, g=9.81):
+    t1, w1, t2, w2 = state
+    d = t1 - t2
+    den = 2*m1 + m2 - m2*np.cos(2*d)
+
+    a1 = (-g*(2*m1+m2)*np.sin(t1) - m2*g*np.sin(t1-2*t2)
+          - 2*np.sin(d)*m2*(w2**2*L2 + w1**2*L1*np.cos(d))) / (L1*den)
+    a2 = (2*np.sin(d)*(w1**2*L1*(m1+m2) + g*(m1+m2)*np.cos(t1)
+          + w2**2*L2*m2*np.cos(d))) / (L2*den)
+
+    return np.array([w1, a1, w2, a2])
+
+def rk4_step(state, dt):
+    k1 = derivs(state)
+    k2 = derivs(state + k1*dt/2)
+    k3 = derivs(state + k2*dt/2)
+    k4 = derivs(state + k3*dt)
+    return state + (dt/6)*(k1 + 2*k2 + 2*k3 + k4)
+
+# Integrate
+dt, steps = 0.005, 20000
+state = np.array([np.radians(120), 0, np.radians(-60), 0])
+trail = np.zeros((steps, 2))
+
+for i in range(steps):
+    trail[i] = [np.sin(state[0]) + np.sin(state[2]),
+               -np.cos(state[0]) - np.cos(state[2])]
+    state = rk4_step(state, dt)
+
+# Plot the trace of the lower bob
+fig, ax = plt.subplots(figsize=(8, 8), facecolor="black")
+ax.set_facecolor("black")
+ax.plot(trail[:, 0], trail[:, 1], lw=0.3, color="cyan", alpha=0.7)
+ax.set_aspect("equal")
+ax.set_axis_off()
+plt.tight_layout()
+plt.show()
+```
+
+## Sensitivity to Initial Conditions
+
+What makes the double pendulum captivating is its extreme sensitivity to starting angles. Change $\theta_1$ by just $0.001°$ and after a few seconds the two trajectories will look completely unrelated. This is the signature of **deterministic chaos** — the equations are perfectly deterministic, yet practical prediction is impossible because any measurement has finite precision.
+
+Unlike the Lorenz system which has a single positive Lyapunov exponent, the double pendulum's largest Lyapunov exponent depends on the energy of the system. At higher energies (larger starting angles), the motion becomes more chaotic. At very low energies, the system is nearly periodic — try setting both angles to small values like $5°$ in the visualization above and compare with $170°$.
+
+## Why It Matters
+
+The double pendulum sits at the intersection of classical mechanics and chaos theory. It proves that **complexity doesn't require complicated rules** — just two linked rods and gravity are enough to produce motion that is effectively random. This insight extends far beyond physics: weather, population dynamics, financial markets, and even the three-body problem in astronomy all share this fundamental unpredictability.

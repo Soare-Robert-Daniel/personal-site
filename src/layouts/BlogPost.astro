@@ -8,7 +8,7 @@ import Header from '../components/Header.astro';
 
 type Props = CollectionEntry<'blog'>['data'];
 
-const { title, description, pubDate, updatedDate, heroImage } = Astro.props;
+const { title, description, pubDate, updatedDate, heroImage, aiGenerated, aiConversationUrl } = Astro.props;
 ---
 
 <html lang="en">
@@ -53,6 +53,29 @@ const { title, description, pubDate, updatedDate, heroImage } = Astro.props;
 			.last-updated-on {
 				font-style: italic;
 			}
+			.ai-label {
+				display: inline-block;
+				padding: 0.3rem 0.8rem;
+				background: var(--bg-card);
+				border: 1px solid var(--border-subtle);
+				border-radius: 6px;
+				font-size: 0.8rem;
+				color: var(--text-muted);
+				margin-top: 0.5rem;
+			}
+			.ai-notice {
+				background: var(--bg-card);
+				border: 1px solid var(--border-subtle);
+				border-left: 3px solid var(--accent);
+				border-radius: 8px;
+				padding: 1rem 1.25rem;
+				margin-bottom: 2rem;
+				font-size: 0.85rem;
+			}
+			.ai-notice p {
+				margin: 0.5rem 0 0;
+				color: var(--text-muted);
+			}
 		</style>
 	</head>
 
@@ -78,9 +101,22 @@ const { title, description, pubDate, updatedDate, heroImage } = Astro.props;
 							}
 						</div>
 						<h1>{title}</h1>
+						{aiGenerated && (
+							<span class="ai-label">🤖 AI Generated</span>
+						)}
 						<hr />
-					</div>
-					<slot />
+						</div>
+						{aiGenerated && (
+						<div class="ai-notice">
+							<strong>🤖 AI-Generated Content</strong>
+							{aiConversationUrl ? (
+								<p>This blog post was generated with the assistance of AI. <a href={aiConversationUrl} target="_blank" rel="noopener noreferrer">View the conversation</a>.</p>
+							) : (
+								<p>This blog post was generated with the assistance of AI.</p>
+							)}
+						</div>
+						)}
+						<slot />
 				</div>
 			</article>
 		</main>

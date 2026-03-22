@@ -1,0 +1,900 @@
+---
+---
+
+<div id="sp-wrapper">
+	<div id="sp-canvas-container">
+		<canvas id="sp-canvas"></canvas>
+		<div id="sp-instructions"></div>
+	</div>
+	<div id="sp-controls">
+		<div class="sp-controls-grid">
+			<div class="sp-control">
+				<div class="sp-control-header">
+					<span class="sp-label">Speed</span>
+					<span><span id="sp-speed-val">5</span>x</span>
+				</div>
+				<input type="range" id="sp-speed" min="1" max="20" step="1" value="5" />
+			</div>
+			<div class="sp-control">
+				<div class="sp-control-header">
+					<span class="sp-label">Nodes</span>
+					<span id="sp-size-val">12</span>
+				</div>
+				<input type="range" id="sp-size" min="6" max="18" step="1" value="12" />
+			</div>
+		</div>
+		<div class="sp-btn-groups">
+			<div class="sp-btn-group">
+				<button class="sp-type-btn sp-active" data-type="random">Random</button>
+				<button class="sp-type-btn" data-type="grid">Grid</button>
+				<button class="sp-type-btn" data-type="circular">Circular</button>
+			</div>
+			<div class="sp-btn-group">
+				<button class="sp-algo-btn sp-active" data-algo="dijkstra">Dijkstra</button>
+				<button class="sp-algo-btn" data-algo="bfs">BFS</button>
+			</div>
+		</div>
+		<div class="sp-buttons">
+			<button id="sp-play">▶ Play</button>
+			<button id="sp-reset">↺ Reset</button>
+		</div>
+		<span class="sp-controls-hint">click two nodes to set source and target, then press Play</span>
+	</div>
+	<div id="sp-table-container">
+		<table id="sp-table">
+			<thead>
+				<tr>
+					<th>Node</th>
+					<th>Distance</th>
+					<th>Prev</th>
+					<th>Visited</th>
+				</tr>
+			</thead>
+			<tbody id="sp-table-body"></tbody>
+		</table>
+	</div>
+</div>
+
+<script>
+	const canvas = document.getElementById('sp-canvas') as HTMLCanvasElement;
+	const container = document.getElementById('sp-canvas-container')!;
+	const ctx = canvas.getContext('2d')!;
+	const instructions = document.getElementById('sp-instructions')!;
+	const tableBody = document.getElementById('sp-table-body')!;
+
+	const speedSlider = document.getElementById('sp-speed') as HTMLInputElement;
+	const sizeSlider = document.getElementById('sp-size') as HTMLInputElement;
+	const speedVal = document.getElementById('sp-speed-val')!;
+	const sizeVal = document.getElementById('sp-size-val')!;
+	const playBtn = document.getElementById('sp-play') as HTMLButtonElement;
+	const resetBtn = document.getElementById('sp-reset') as HTMLButtonElement;
+	const typeBtns = document.querySelectorAll('.sp-type-btn');
+	const algoBtns = document.querySelectorAll('.sp-algo-btn');
+
+	interface Node {
+		x: number;
+		y: number;
+		label: string;
+	}
+
+	interface Edge {
+		from: number;
+		to: number;
+		weight: number;
+	}
+
+	let nodes: Node[] = [];
+	let edges: Edge[] = [];
+	let adj: { to: number; weight: number }[][] = [];
+
+	let source = -1;
+	let target = -1;
+	let selectPhase: 'source' | 'target' | 'ready' = 'source';
+
+	let running = false;
+	let finished = false;
+	let graphType = 'random';
+	let algoType = 'dijkstra';
+
+	// Dijkstra state
+	let dist: number[] = [];
+	let prev: (number | null)[] = [];
+	let visited: boolean[] = [];
+	let currentNode = -1;
+	let relaxingEdge = -1; // edge index being relaxed
+	let relaxFrame = 0;
+	let shortestPath: number[] = [];
+	let pathAnimProgress = 0;
+
+	// Animation
+	let frameCount = 0;
+	let celebrationStart = -1;
+	const CELEBRATION_DURATION = 80;
+
+	// BFS state
+	let bfsQueue: number[] = [];
+
+	// Dijkstra queue (simple array-based)
+	let pqProcessed = false;
+
+	function label(i: number): string {
+		return String.fromCharCode(65 + i);
+	}
+
+	function generateGraph(count: number) {
+		nodes = [];
+		edges = [];
+		const padding = 0.12;
+		const w = 1 - padding * 2;
+		const h = 1 - padding * 2;
+
+		if (graphType === 'grid') {
+			const cols = Math.ceil(Math.sqrt(count));
+			const rows = Math.ceil(count / cols);
+			let idx = 0;
+			for (let r = 0; r < rows && idx < count; r++) {
+				for (let c = 0; c < cols && idx < count; c++) {
+					nodes.push({
+						x: padding + (cols > 1 ? (c / (cols - 1)) * w : w / 2),
+						y: padding + (rows > 1 ? (r / (rows - 1)) * h : h / 2),
+						label: label(idx),
+					});
+					idx++;
+				}
+			}
+			const cols2 = cols;
+			for (let i = 0; i < count; i++) {
+				const r = Math.floor(i / cols2);
+				const c = i % cols2;
+				if (c + 1 < cols2 && i + 1 < count) {
+					edges.push({ from: i, to: i + 1, weight: randWeight() });
+				}
+				if (r + 1 < rows && i + cols2 < count) {
+					edges.push({ from: i, to: i + cols2, weight: randWeight() });
+				}
+			}
+		} else if (graphType === 'circular') {
+			for (let i = 0; i < count; i++) {
+				const angle = (i / count) * Math.PI * 2 - Math.PI / 2;
+				nodes.push({
+					x: 0.5 + Math.cos(angle) * w * 0.42,
+					y: 0.5 + Math.sin(angle) * h * 0.42,
+					label: label(i),
+				});
+			}
+			for (let i = 0; i < count; i++) {
+				edges.push({ from: i, to: (i + 1) % count, weight: randWeight() });
+			}
+			const extras = Math.floor(count * 0.6);
+			for (let e = 0; e < extras; e++) {
+				const a = Math.floor(Math.random() * count);
+				let b = (a + 2 + Math.floor(Math.random() * (count - 3))) % count;
+				if (a !== b && !edgeExists(a, b)) {
+					edges.push({ from: a, to: b, weight: randWeight() });
+				}
+			}
+		} else {
+			// Random with min distance
+			for (let i = 0; i < count; i++) {
+				let attempts = 0;
+				let x: number, y: number;
+				do {
+					x = padding + Math.random() * w;
+					y = padding + Math.random() * h;
+					attempts++;
+				} while (attempts < 200 && nodes.some((n) => Math.hypot(n.x - x, n.y - y) < 0.14));
+				nodes.push({ x, y, label: label(i) });
+			}
+			// Spanning tree for connectivity
+			const inTree = new Set([0]);
+			const remaining = new Set(Array.from({ length: count - 1 }, (_, i) => i + 1));
+			while (remaining.size > 0) {
+				let bestDist = Infinity;
+				let bestA = 0, bestB = 0;
+				for (const a of inTree) {
+					for (const b of remaining) {
+						const d = Math.hypot(nodes[a].x - nodes[b].x, nodes[a].y - nodes[b].y);
+						if (d < bestDist) {
+							bestDist = d;
+							bestA = a;
+							bestB = b;
+						}
+					}
+				}
+				edges.push({ from: bestA, to: bestB, weight: randWeight() });
+				inTree.add(bestB);
+				remaining.delete(bestB);
+			}
+			// Extra edges
+			const extras = Math.floor(count * 0.8);
+			for (let e = 0; e < extras; e++) {
+				const a = Math.floor(Math.random() * count);
+				const b = Math.floor(Math.random() * count);
+				if (a !== b && !edgeExists(a, b)) {
+					edges.push({ from: a, to: b, weight: randWeight() });
+				}
+			}
+		}
+
+		buildAdj();
+	}
+
+	function randWeight(): number {
+		return Math.floor(Math.random() * 15) + 1;
+	}
+
+	function edgeExists(a: number, b: number): boolean {
+		return edges.some(
+			(e) => (e.from === a && e.to === b) || (e.from === b && e.to === a)
+		);
+	}
+
+	function buildAdj() {
+		adj = Array.from({ length: nodes.length }, () => []);
+		for (const e of edges) {
+			adj[e.from].push({ to: e.to, weight: e.weight });
+			adj[e.to].push({ to: e.from, weight: e.weight });
+		}
+	}
+
+	function initAlgo() {
+		const n = nodes.length;
+		dist = Array(n).fill(Infinity);
+		prev = Array(n).fill(null);
+		visited = Array(n).fill(false);
+		currentNode = -1;
+		relaxingEdge = -1;
+		relaxFrame = 0;
+		shortestPath = [];
+		pathAnimProgress = 0;
+		celebrationStart = -1;
+
+		if (source >= 0) dist[source] = 0;
+		bfsQueue = source >= 0 ? [source] : [];
+		pqProcessed = false;
+	}
+
+	function stepDijkstra(): boolean {
+		const n = nodes.length;
+		// Pick unvisited node with smallest dist
+		let minDist = Infinity;
+		let minNode = -1;
+		for (let i = 0; i < n; i++) {
+			if (!visited[i] && dist[i] < minDist) {
+				minDist = dist[i];
+				minNode = i;
+			}
+		}
+		if (minNode === -1 || minDist === Infinity) return true; // done, no path
+		currentNode = minNode;
+		visited[minNode] = true;
+
+		if (minNode === target) {
+			reconstructPath();
+			return true;
+		}
+
+		// Relax neighbors
+		for (const { to, weight } of adj[minNode]) {
+			if (!visited[to]) {
+				const alt = dist[minNode] + weight;
+				if (alt < dist[to]) {
+					dist[to] = alt;
+					prev[to] = minNode;
+				}
+			}
+		}
+		return false;
+	}
+
+	function stepBFS(): boolean {
+		if (bfsQueue.length === 0) return true;
+		const u = bfsQueue.shift()!;
+		if (visited[u]) return bfsQueue.length === 0;
+		currentNode = u;
+		visited[u] = true;
+
+		if (u === target) {
+			reconstructPath();
+			return true;
+		}
+
+		for (const { to } of adj[u]) {
+			if (!visited[to] && dist[to] === Infinity) {
+				dist[to] = dist[u] + 1;
+				prev[to] = u;
+				bfsQueue.push(to);
+			}
+		}
+		return bfsQueue.length === 0;
+	}
+
+	function reconstructPath() {
+		shortestPath = [];
+		let node: number | null = target;
+		while (node !== null) {
+			shortestPath.push(node);
+			node = prev[node];
+		}
+		shortestPath.reverse();
+		if (shortestPath[0] !== source) shortestPath = []; // no path
+	}
+
+	function resize() {
+		const rect = container.getBoundingClientRect();
+		const dpr = Math.min(window.devicePixelRatio, 2);
+		canvas.width = rect.width * dpr;
+		canvas.height = rect.height * dpr;
+	}
+
+	function toCanvas(nx: number, ny: number): [number, number] {
+		const dpr = Math.min(window.devicePixelRatio, 2);
+		const w = canvas.width / dpr;
+		const h = canvas.height / dpr;
+		return [nx * w, ny * h];
+	}
+
+	function getNodeColor(i: number): string {
+		if (finished && shortestPath.includes(i)) return '#00ff88';
+		if (i === currentNode && running && !finished) return '#ffcc00';
+		if (visited[i]) return '#00ff88';
+		if (dist[i] < Infinity) return '#ffcc00';
+		if (i === source) return '#00f0ff';
+		if (i === target) return '#ff8844';
+		return 'rgba(0, 240, 255, 0.7)';
+	}
+
+	function getEdgeColor(e: Edge): string {
+		if (finished && shortestPath.length > 1) {
+			for (let k = 0; k < shortestPath.length - 1; k++) {
+				if (
+					(e.from === shortestPath[k] && e.to === shortestPath[k + 1]) ||
+					(e.to === shortestPath[k] && e.from === shortestPath[k + 1])
+				) {
+					return '#00ff88';
+				}
+			}
+		}
+		if (
+			!finished && currentNode >= 0 &&
+			(e.from === currentNode || e.to === currentNode) &&
+			running
+		) {
+			const other = e.from === currentNode ? e.to : e.from;
+			if (!visited[other]) return '#ff6060';
+		}
+		// Part of shortest-path tree
+		if (prev[e.to] === e.from || prev[e.from] === e.to) {
+			return 'rgba(0, 255, 136, 0.4)';
+		}
+		return 'rgba(255, 255, 255, 0.12)';
+	}
+
+	function getEdgeWidth(e: Edge): number {
+		if (finished && shortestPath.length > 1) {
+			for (let k = 0; k < shortestPath.length - 1; k++) {
+				if (
+					(e.from === shortestPath[k] && e.to === shortestPath[k + 1]) ||
+					(e.to === shortestPath[k] && e.from === shortestPath[k + 1])
+				) {
+					return 3;
+				}
+			}
+		}
+		return 1.2;
+	}
+
+	function draw() {
+		const dpr = Math.min(window.devicePixelRatio, 2);
+		const w = canvas.width / dpr;
+		const h = canvas.height / dpr;
+
+		ctx.save();
+		ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+		// Background
+		const grad = ctx.createRadialGradient(w / 2, h / 2, 0, w / 2, h / 2, Math.max(w, h));
+		grad.addColorStop(0, '#12121a');
+		grad.addColorStop(1, '#0a0a0f');
+		ctx.fillStyle = grad;
+		ctx.fillRect(0, 0, w, h);
+
+		const nodeRadius = Math.max(10, Math.min(18, w / nodes.length * 0.35));
+
+		// Draw edges
+		for (const e of edges) {
+			const [x1, y1] = toCanvas(nodes[e.from].x, nodes[e.from].y);
+			const [x2, y2] = toCanvas(nodes[e.to].x, nodes[e.to].y);
+			const color = getEdgeColor(e);
+			const lw = getEdgeWidth(e);
+
+			ctx.strokeStyle = color;
+			ctx.lineWidth = lw;
+			if (color === '#00ff88') {
+				ctx.shadowColor = '#00ff88';
+				ctx.shadowBlur = 8;
+			} else if (color === '#ff6060') {
+				ctx.shadowColor = '#ff6060';
+				ctx.shadowBlur = 6;
+			} else {
+				ctx.shadowBlur = 0;
+			}
+			ctx.beginPath();
+			ctx.moveTo(x1, y1);
+			ctx.lineTo(x2, y2);
+			ctx.stroke();
+			ctx.shadowBlur = 0;
+
+			// Weight label
+			if (algoType === 'dijkstra') {
+				const mx = (x1 + x2) / 2;
+				const my = (y1 + y2) / 2;
+				ctx.font = `${Math.max(9, nodeRadius * 0.55)}px monospace`;
+				ctx.fillStyle = 'rgba(255, 255, 255, 0.45)';
+				ctx.textAlign = 'center';
+				ctx.textBaseline = 'middle';
+				// Offset label slightly to avoid edge overlap
+				const dx = y2 - y1;
+				const dy = x1 - x2;
+				const len = Math.hypot(dx, dy) || 1;
+				const off = 8;
+				ctx.fillText(
+					String(e.weight),
+					mx + (dx / len) * off,
+					my + (dy / len) * off
+				);
+			}
+		}
+
+		// Draw nodes
+		for (let i = 0; i < nodes.length; i++) {
+			const [cx, cy] = toCanvas(nodes[i].x, nodes[i].y);
+			const color = getNodeColor(i);
+
+			// Glow
+			if (i === currentNode && running && !finished) {
+				ctx.shadowColor = '#ffcc00';
+				ctx.shadowBlur = 14;
+			} else if (finished && shortestPath.includes(i)) {
+				ctx.shadowColor = '#00ff88';
+				ctx.shadowBlur = 10;
+			} else if (visited[i]) {
+				ctx.shadowColor = '#00ff88';
+				ctx.shadowBlur = 6;
+			} else {
+				ctx.shadowColor = '#00f0ff';
+				ctx.shadowBlur = 4;
+			}
+
+			ctx.beginPath();
+			ctx.arc(cx, cy, nodeRadius, 0, Math.PI * 2);
+			ctx.fillStyle = '#0e0e16';
+			ctx.fill();
+			ctx.strokeStyle = color;
+			ctx.lineWidth = 2;
+			ctx.stroke();
+			ctx.shadowBlur = 0;
+
+			// Source/target indicator rings
+			if (i === source || i === target) {
+				ctx.beginPath();
+				ctx.arc(cx, cy, nodeRadius + 4, 0, Math.PI * 2);
+				ctx.strokeStyle = i === source ? '#00f0ff' : '#ff8844';
+				ctx.lineWidth = 1.5;
+				ctx.setLineDash([3, 3]);
+				ctx.stroke();
+				ctx.setLineDash([]);
+			}
+
+			// Node label
+			ctx.font = `bold ${Math.max(10, nodeRadius * 0.7)}px monospace`;
+			ctx.fillStyle = color;
+			ctx.textAlign = 'center';
+			ctx.textBaseline = 'middle';
+			ctx.fillText(nodes[i].label, cx, cy);
+
+			// Distance label
+			if (source >= 0 && (running || finished)) {
+				const dStr = dist[i] === Infinity ? '∞' : String(dist[i]);
+				ctx.font = `${Math.max(8, nodeRadius * 0.5)}px monospace`;
+				ctx.fillStyle = visited[i] ? '#00ff88' : 'rgba(255,255,255,0.5)';
+				ctx.fillText(dStr, cx, cy + nodeRadius + 10);
+			}
+		}
+
+		// Celebration overlay
+		if (celebrationStart >= 0) {
+			const elapsed = frameCount - celebrationStart;
+			if (elapsed < CELEBRATION_DURATION) {
+				const alpha = Math.sin((elapsed / CELEBRATION_DURATION) * Math.PI * 3) * 0.15;
+				if (alpha > 0) {
+					ctx.fillStyle = `rgba(0, 255, 136, ${alpha})`;
+					ctx.fillRect(0, 0, w, h);
+				}
+			}
+		}
+
+		ctx.restore();
+	}
+
+	function updateTable() {
+		let html = '';
+		for (let i = 0; i < nodes.length; i++) {
+			const dStr = dist[i] === Infinity ? '∞' : String(dist[i]);
+			const pStr = prev[i] !== null ? label(prev[i] as number) : '—';
+			const vStr = visited[i] ? '✓' : '';
+			const cls = i === currentNode && running && !finished ? ' class="sp-current"' : visited[i] ? ' class="sp-visited"' : '';
+			html += `<tr${cls}><td>${nodes[i].label}</td><td>${dStr}</td><td>${pStr}</td><td>${vStr}</td></tr>`;
+		}
+		tableBody.innerHTML = html;
+	}
+
+	function updateInstructions() {
+		if (selectPhase === 'source') {
+			instructions.textContent = 'Click a node to set the source';
+			instructions.style.display = 'block';
+		} else if (selectPhase === 'target') {
+			instructions.textContent = 'Click a node to set the target';
+			instructions.style.display = 'block';
+		} else if (!running && !finished) {
+			instructions.textContent = 'Press Play to start';
+			instructions.style.display = 'block';
+		} else {
+			instructions.style.display = 'none';
+		}
+	}
+
+	// Click handling
+	canvas.addEventListener('click', (e) => {
+		if (running || finished) return;
+		const rect = canvas.getBoundingClientRect();
+		const mx = (e.clientX - rect.left) / rect.width;
+		const my = (e.clientY - rect.top) / rect.height;
+
+		let closest = -1;
+		let closestDist = Infinity;
+		for (let i = 0; i < nodes.length; i++) {
+			const d = Math.hypot(nodes[i].x - mx, nodes[i].y - my);
+			if (d < closestDist) {
+				closestDist = d;
+				closest = i;
+			}
+		}
+
+		const threshold = 0.06;
+		if (closest >= 0 && closestDist < threshold) {
+			if (selectPhase === 'source') {
+				source = closest;
+				selectPhase = 'target';
+				initAlgo();
+			} else if (selectPhase === 'target' && closest !== source) {
+				target = closest;
+				selectPhase = 'ready';
+			}
+			updateInstructions();
+			updateTable();
+		}
+	});
+
+	function animate() {
+		frameCount++;
+
+		if (running && !finished) {
+			const speed = parseInt(speedSlider.value);
+			if (frameCount % Math.max(1, Math.floor(60 / speed)) === 0) {
+				let done: boolean;
+				if (algoType === 'dijkstra') {
+					done = stepDijkstra();
+				} else {
+					done = stepBFS();
+				}
+				updateTable();
+
+				if (done) {
+					finished = true;
+					running = false;
+					playBtn.textContent = '▶ Play';
+					if (shortestPath.length > 0) {
+						celebrationStart = frameCount;
+					}
+					updateInstructions();
+				}
+			}
+		}
+
+		draw();
+		requestAnimationFrame(animate);
+	}
+
+	function fullReset() {
+		const size = parseInt(sizeSlider.value);
+		generateGraph(size);
+		source = -1;
+		target = -1;
+		selectPhase = 'source';
+		running = false;
+		finished = false;
+		initAlgo();
+		playBtn.textContent = '▶ Play';
+		updateInstructions();
+		updateTable();
+	}
+
+	// Controls
+	speedSlider.addEventListener('input', () => {
+		speedVal.textContent = speedSlider.value;
+	});
+	sizeSlider.addEventListener('input', () => {
+		sizeVal.textContent = sizeSlider.value;
+	});
+
+	playBtn.addEventListener('click', () => {
+		if (finished) return;
+		if (selectPhase !== 'ready') return;
+		running = !running;
+		playBtn.textContent = running ? '⏸ Pause' : '▶ Play';
+		updateInstructions();
+	});
+
+	resetBtn.addEventListener('click', fullReset);
+
+	typeBtns.forEach((btn) => {
+		btn.addEventListener('click', () => {
+			typeBtns.forEach((b) => b.classList.remove('sp-active'));
+			btn.classList.add('sp-active');
+			graphType = (btn as HTMLElement).dataset.type!;
+			fullReset();
+		});
+	});
+
+	algoBtns.forEach((btn) => {
+		btn.addEventListener('click', () => {
+			algoBtns.forEach((b) => b.classList.remove('sp-active'));
+			btn.classList.add('sp-active');
+			algoType = (btn as HTMLElement).dataset.algo!;
+			fullReset();
+		});
+	});
+
+	window.addEventListener('resize', resize);
+
+	// Init
+	resize();
+	fullReset();
+	animate();
+</script>
+
+<style>
+	#sp-wrapper {
+		margin: 2rem 0;
+	}
+
+	#sp-canvas-container {
+		width: 100%;
+		aspect-ratio: 16 / 10;
+		border-radius: 12px 12px 0 0;
+		overflow: hidden;
+		background: #0a0a0f;
+		border: 1px solid rgba(0, 240, 255, 0.15);
+		border-bottom: none;
+		position: relative;
+	}
+
+	#sp-canvas {
+		width: 100%;
+		height: 100%;
+		display: block;
+		cursor: pointer;
+	}
+
+	#sp-instructions {
+		position: absolute;
+		bottom: 12px;
+		left: 50%;
+		transform: translateX(-50%);
+		background: rgba(0, 0, 0, 0.7);
+		color: rgba(0, 240, 255, 0.9);
+		padding: 0.4rem 1rem;
+		border-radius: 6px;
+		font-size: 0.8rem;
+		pointer-events: none;
+		white-space: nowrap;
+	}
+
+	#sp-controls {
+		background: #111118;
+		border: 1px solid rgba(0, 240, 255, 0.15);
+		border-top: none;
+		padding: 1rem 1.25rem;
+	}
+
+	.sp-controls-grid {
+		display: grid;
+		grid-template-columns: 1fr 1fr;
+		gap: 0.6rem 1.5rem;
+	}
+
+	.sp-control {
+		display: flex;
+		flex-direction: column;
+		gap: 0.25rem;
+	}
+
+	.sp-control-header {
+		display: flex;
+		justify-content: space-between;
+		align-items: center;
+		font-size: 0.8rem;
+		color: rgba(255, 255, 255, 0.5);
+	}
+
+	.sp-label {
+		color: rgba(0, 240, 255, 0.8);
+		font-weight: 700;
+	}
+
+	#sp-wrapper input[type="range"] {
+		-webkit-appearance: none;
+		appearance: none;
+		width: 100%;
+		height: 4px;
+		background: rgba(255, 255, 255, 0.1);
+		border-radius: 2px;
+		outline: none;
+		cursor: pointer;
+	}
+
+	#sp-wrapper input[type="range"]::-webkit-slider-thumb {
+		-webkit-appearance: none;
+		appearance: none;
+		width: 14px;
+		height: 14px;
+		border-radius: 50%;
+		background: #00f0ff;
+		cursor: pointer;
+		box-shadow: 0 0 8px rgba(0, 240, 255, 0.4);
+	}
+
+	#sp-wrapper input[type="range"]::-moz-range-thumb {
+		width: 14px;
+		height: 14px;
+		border-radius: 50%;
+		background: #00f0ff;
+		cursor: pointer;
+		border: none;
+		box-shadow: 0 0 8px rgba(0, 240, 255, 0.4);
+	}
+
+	.sp-btn-groups {
+		display: flex;
+		gap: 0.75rem;
+		margin-top: 0.75rem;
+	}
+
+	.sp-btn-group {
+		display: flex;
+		flex: 1;
+	}
+
+	.sp-btn-group button {
+		flex: 1;
+		padding: 0.4rem 0.5rem;
+		background: #0a0a0f;
+		color: rgba(255, 255, 255, 0.5);
+		border: 1px solid rgba(0, 240, 255, 0.15);
+		cursor: pointer;
+		font-family: inherit;
+		font-size: 0.75rem;
+		transition: all 0.2s ease;
+	}
+
+	.sp-btn-group button:first-child {
+		border-radius: 6px 0 0 6px;
+	}
+
+	.sp-btn-group button:last-child {
+		border-radius: 0 6px 6px 0;
+	}
+
+	.sp-btn-group button:not(:first-child) {
+		border-left: none;
+	}
+
+	.sp-btn-group button.sp-active {
+		background: rgba(0, 240, 255, 0.15);
+		color: #00f0ff;
+		border-color: #00f0ff;
+	}
+
+	.sp-btn-group button:not(.sp-active) + button.sp-active {
+		border-left: 1px solid #00f0ff;
+	}
+
+	.sp-btn-group button:hover:not(.sp-active) {
+		border-color: rgba(0, 240, 255, 0.4);
+		color: rgba(255, 255, 255, 0.7);
+	}
+
+	.sp-buttons {
+		display: flex;
+		gap: 0.75rem;
+		margin-top: 0.75rem;
+	}
+
+	.sp-buttons button {
+		flex: 1;
+		padding: 0.5rem 1rem;
+		background: #0a0a0f;
+		color: rgba(255, 255, 255, 0.7);
+		border: 1px solid rgba(0, 240, 255, 0.15);
+		border-radius: 6px;
+		cursor: pointer;
+		font-family: inherit;
+		font-size: 0.85rem;
+		transition: all 0.2s ease;
+	}
+
+	.sp-buttons button:hover {
+		border-color: #00f0ff;
+		color: #00f0ff;
+	}
+
+	.sp-controls-hint {
+		display: block;
+		text-align: center;
+		font-size: 0.7rem;
+		color: rgba(255, 255, 255, 0.25);
+		margin-top: 0.75rem;
+	}
+
+	#sp-table-container {
+		background: #111118;
+		border: 1px solid rgba(0, 240, 255, 0.15);
+		border-top: none;
+		border-radius: 0 0 12px 12px;
+		padding: 0.75rem 1.25rem 1rem;
+		overflow-x: auto;
+	}
+
+	#sp-table {
+		width: 100%;
+		border-collapse: collapse;
+		font-size: 0.75rem;
+		font-family: monospace;
+	}
+
+	#sp-table th {
+		color: rgba(0, 240, 255, 0.7);
+		font-weight: 700;
+		text-align: left;
+		padding: 0.3rem 0.5rem;
+		border-bottom: 1px solid rgba(0, 240, 255, 0.15);
+		font-size: 0.7rem;
+		text-transform: uppercase;
+		letter-spacing: 0.05em;
+	}
+
+	#sp-table td {
+		padding: 0.25rem 0.5rem;
+		color: rgba(255, 255, 255, 0.5);
+		border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+	}
+
+	#sp-table :global(tr.sp-current) td {
+		color: #ffcc00;
+		background: rgba(255, 204, 0, 0.05);
+	}
+
+	#sp-table :global(tr.sp-visited) td {
+		color: rgba(0, 255, 136, 0.7);
+	}
+
+	@media (max-width: 500px) {
+		.sp-controls-grid {
+			grid-template-columns: 1fr;
+		}
+		.sp-btn-groups {
+			flex-direction: column;
+		}
+	}
+</style>

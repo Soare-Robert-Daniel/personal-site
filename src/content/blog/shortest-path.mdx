@@ -1,0 +1,79 @@
+---
+title: "Prompt Training: Shortest Path"
+description: "Visualizing Dijkstra's algorithm — watching the shortest path emerge as the algorithm explores a graph node by node."
+pubDate: "2026-02-22"
+aiGenerated: true
+aiConversationUrl: "https://ampcode.com/threads/T-019c8635-7f4f-705f-a8f8-25ad2b4c3834"
+---
+
+import ShortestPathVisualization from '../../components/ShortestPathVisualization.astro';
+
+Dijkstra's algorithm is the **gold standard** of shortest-path algorithms. Every time you ask your GPS for directions or a network packet finds its way across the internet, some variant of this algorithm is at work. Invented by **Edsger Dijkstra** in 1956 (and published in 1959), it elegantly solves a problem that feels impossibly complex — finding the shortest route through a maze of weighted connections — with a surprisingly simple strategy: always expand the closest unexplored node.
+
+## How It Works
+
+The algorithm builds outward from the source, one node at a time:
+
+1. Assign a distance of **∞** to every node, except the **source** which gets **0**
+2. Mark all nodes as **unvisited**
+3. Pick the unvisited node with the **smallest distance** — this is the "current" node
+4. For each unvisited **neighbor**, calculate the tentative distance through the current node
+5. If the new distance is **smaller** than the existing one, update it
+6. Mark the current node as **visited** (it's now finalized)
+7. Repeat until the target is visited or all reachable nodes are processed
+
+Think of it like dropping a stone into a pond. Ripples spread outward from the source, reaching closer nodes first. The algorithm explores in exactly that pattern — radiating outward, always processing the nearest frontier node before moving further away.
+
+## Interactive Visualization
+
+<ShortestPathVisualization />
+
+## Implementation
+
+Here's a clean Python implementation using a **priority queue** for efficient node selection:
+
+```python
+import heapq
+
+def dijkstra(graph, source, target):
+    dist = {node: float('inf') for node in graph}
+    prev = {node: None for node in graph}
+    dist[source] = 0
+    queue = [(0, source)]
+
+    while queue:
+        d, u = heapq.heappop(queue)
+        if d > dist[u]:
+            continue
+        if u == target:
+            break
+        for v, weight in graph[u]:
+            alt = dist[u] + weight
+            if alt < dist[v]:
+                dist[v] = alt
+                prev[v] = u
+                heapq.heappush(queue, (alt, v))
+
+    # Reconstruct path
+    path = []
+    node = target
+    while node is not None:
+        path.append(node)
+        node = prev[node]
+    return path[::-1], dist[target]
+```
+
+The **priority queue** (`heapq`) is the key data structure — it lets us efficiently grab the unvisited node with the smallest distance without scanning every node each time. The `d > dist[u]` check is a **lazy deletion** optimization: instead of updating priorities in the heap (which is expensive), we push duplicates and skip stale entries when we pop them.
+
+## Time Complexity
+
+- **With binary heap**: O((V + E) log V) — the standard implementation above
+- **With Fibonacci heap**: O(V log V + E) — theoretically optimal, rarely used in practice
+- **Without heap (array scan)**: O(V²) — simpler but slower, better for dense graphs
+- **Space**: O(V + E)
+
+For comparison, **BFS** solves unweighted graphs in O(V + E) and is all you need when every edge has the same cost. **Bellman-Ford** handles negative edge weights in O(VE), which Dijkstra cannot. And **A\*** can outperform Dijkstra by using a heuristic to guide the search toward the target — it's what most games actually use for pathfinding.
+
+## Why It Matters
+
+Dijkstra's algorithm teaches three big ideas at once: **greedy algorithms** (always picking the closest node works), **priority queues** (the right data structure transforms performance), and **graph representation** (adjacency lists, edge weights, path reconstruction). It's everywhere in the real world — GPS navigation, network routing protocols like **OSPF**, game AI pathfinding, and social network analysis. The core insight is powerful: locally optimal choices (always expanding the nearest unvisited node) lead to globally optimal shortest paths.

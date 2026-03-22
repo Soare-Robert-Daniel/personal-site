@@ -1,0 +1,61 @@
+---
+title: "Prompt Training: Bubble Sort"
+description: "Visualizing the simplest sorting algorithm — watching elements bubble into place one swap at a time."
+pubDate: "2026-02-22"
+aiGenerated: true
+aiConversationUrl: "https://ampcode.com/threads/T-019c862f-4f2f-70d9-98ea-3eacc4c35098"
+---
+
+import BubbleSortVisualization from '../../components/BubbleSortVisualization.astro';
+
+Bubble sort is the **"hello world"** of sorting algorithms. Everyone learns it first. It's slow, it's simple, and it's beautiful to watch. Each pass through the array "bubbles" the largest unsorted element to its correct position — like air bubbles rising through water, larger values float to the top.
+
+## How It Works
+
+The algorithm follows a straightforward pattern:
+
+1. Start at the beginning of the array
+2. Compare each pair of **adjacent elements**
+3. If they're in the wrong order, **swap** them
+4. After one full pass, the largest element has "bubbled" to the end
+5. Repeat for the remaining unsorted portion
+6. Stop when a full pass completes with **no swaps**
+
+Think of it like shaking a bottle of mixed liquids. Each pass lets the heaviest elements sink down (or equivalently, the lightest ones rise up). After enough passes, everything settles into place.
+
+## Interactive Visualization
+
+<BubbleSortVisualization />
+
+## Implementation
+
+Here's a clean Python implementation with an important optimization — the **early exit**:
+
+```python
+def bubble_sort(arr):
+    n = len(arr)
+    for i in range(n):
+        swapped = False
+        for j in range(n - 1 - i):
+            if arr[j] > arr[j + 1]:
+                arr[j], arr[j + 1] = arr[j + 1], arr[j]
+                swapped = True
+        if not swapped:
+            break
+    return arr
+```
+
+The `swapped` flag is the key optimization. If we complete an entire pass without making a single swap, the array is already sorted — no need to continue. This gives bubble sort a **best-case time complexity of O(n)** on already-sorted input, where only one pass is needed.
+
+## Time Complexity
+
+- **Best case**: O(n) — array is already sorted, one pass with no swaps
+- **Worst case**: O(n²) — array is reverse-sorted, maximum comparisons and swaps
+- **Average case**: O(n²)
+- **Space**: O(1) — sorts in-place
+
+For comparison, **merge sort** guarantees O(n log n) in all cases, and **quicksort** achieves O(n log n) on average. Bubble sort's quadratic growth makes it impractical for large datasets — sorting 10,000 elements takes roughly 100 million comparisons, while an O(n log n) algorithm handles it in about 130,000. That's the difference between seconds and hours.
+
+## Why It Matters
+
+Bubble sort teaches fundamental concepts: **iteration**, **comparison**, **swapping**, and **optimization** (the early-exit trick). It's the starting point for understanding why algorithm design matters — why we study data structures and analyze complexity. The difference between O(n²) and O(n log n) is the difference between software that works and software that works *at scale*. Simple rules, clear behavior, important lessons.

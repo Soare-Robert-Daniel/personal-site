@@ -1,0 +1,393 @@
+---
+---
+
+<div id="dp-wrapper">
+	<div id="dp-canvas-container">
+		<canvas id="dp-canvas"></canvas>
+	</div>
+	<div id="dp-controls">
+		<div class="dp-controls-grid">
+			<div class="dp-control">
+				<div class="dp-control-header">
+					<span class="dp-label">L₁</span>
+					<span><span id="dp-l1-val">1.0</span> m</span>
+				</div>
+				<input type="range" id="dp-l1" min="0.5" max="2.0" step="0.1" value="1.0" />
+			</div>
+			<div class="dp-control">
+				<div class="dp-control-header">
+					<span class="dp-label">L₂</span>
+					<span><span id="dp-l2-val">1.0</span> m</span>
+				</div>
+				<input type="range" id="dp-l2" min="0.5" max="2.0" step="0.1" value="1.0" />
+			</div>
+			<div class="dp-control">
+				<div class="dp-control-header">
+					<span class="dp-label">m₁</span>
+					<span><span id="dp-m1-val">1.0</span> kg</span>
+				</div>
+				<input type="range" id="dp-m1" min="0.5" max="5.0" step="0.5" value="1.0" />
+			</div>
+			<div class="dp-control">
+				<div class="dp-control-header">
+					<span class="dp-label">m₂</span>
+					<span><span id="dp-m2-val">1.0</span> kg</span>
+				</div>
+				<input type="range" id="dp-m2" min="0.5" max="5.0" step="0.5" value="1.0" />
+			</div>
+			<div class="dp-control">
+				<div class="dp-control-header">
+					<span class="dp-label">θ₁</span>
+					<span><span id="dp-a1-val">120</span>°</span>
+				</div>
+				<input type="range" id="dp-a1" min="-180" max="180" step="1" value="120" />
+			</div>
+			<div class="dp-control">
+				<div class="dp-control-header">
+					<span class="dp-label">θ₂</span>
+					<span><span id="dp-a2-val">-60</span>°</span>
+				</div>
+				<input type="range" id="dp-a2" min="-180" max="180" step="1" value="-60" />
+			</div>
+		</div>
+		<div class="dp-buttons">
+			<button id="dp-play">⏸ Pause</button>
+			<button id="dp-reset">↺ Reset</button>
+		</div>
+		<span class="dp-controls-hint">adjust parameters, then press Reset to restart</span>
+	</div>
+</div>
+
+<script>
+	const canvas = document.getElementById('dp-canvas') as HTMLCanvasElement;
+	const container = document.getElementById('dp-canvas-container')!;
+	const ctx = canvas.getContext('2d')!;
+
+	const l1Slider = document.getElementById('dp-l1') as HTMLInputElement;
+	const l2Slider = document.getElementById('dp-l2') as HTMLInputElement;
+	const m1Slider = document.getElementById('dp-m1') as HTMLInputElement;
+	const m2Slider = document.getElementById('dp-m2') as HTMLInputElement;
+	const a1Slider = document.getElementById('dp-a1') as HTMLInputElement;
+	const a2Slider = document.getElementById('dp-a2') as HTMLInputElement;
+
+	const l1Val = document.getElementById('dp-l1-val')!;
+	const l2Val = document.getElementById('dp-l2-val')!;
+	const m1Val = document.getElementById('dp-m1-val')!;
+	const m2Val = document.getElementById('dp-m2-val')!;
+	const a1Val = document.getElementById('dp-a1-val')!;
+	const a2Val = document.getElementById('dp-a2-val')!;
+
+	const playBtn = document.getElementById('dp-play') as HTMLButtonElement;
+	const resetBtn = document.getElementById('dp-reset') as HTMLButtonElement;
+
+	// Physics
+	const g = 9.81;
+	const dt = 0.005;
+	const stepsPerFrame = 4;
+	const MAX_TRAIL = 3000;
+
+	let L1: number, L2: number, m1: number, m2: number;
+	let state: number[]; // [theta1, omega1, theta2, omega2]
+	let trail: { x: number; y: number }[] = [];
+	let running = true;
+
+	function derivatives(s: number[]): number[] {
+		const [t1, w1, t2, w2] = s;
+		const delta = t1 - t2;
+		const sd = Math.sin(delta);
+		const cd = Math.cos(delta);
+		const den = 2 * m1 + m2 - m2 * Math.cos(2 * delta);
+
+		const a1 =
+			(-g * (2 * m1 + m2) * Math.sin(t1) -
+				m2 * g * Math.sin(t1 - 2 * t2) -
+				2 * sd * m2 * (w2 * w2 * L2 + w1 * w1 * L1 * cd)) /
+			(L1 * den);
+
+		const a2 =
+			(2 *
+				sd *
+				(w1 * w1 * L1 * (m1 + m2) +
+					g * (m1 + m2) * Math.cos(t1) +
+					w2 * w2 * L2 * m2 * cd)) /
+			(L2 * den);
+
+		return [w1, a1, w2, a2];
+	}
+
+	function rk4Step(s: number[]): number[] {
+		const k1 = derivatives(s);
+		const s2 = s.map((v, i) => v + k1[i] * dt / 2);
+		const k2 = derivatives(s2);
+		const s3 = s.map((v, i) => v + k2[i] * dt / 2);
+		const k3 = derivatives(s3);
+		const s4 = s.map((v, i) => v + k3[i] * dt);
+		const k4 = derivatives(s4);
+		return s.map((v, i) => v + (dt / 6) * (k1[i] + 2 * k2[i] + 2 * k3[i] + k4[i]));
+	}
+
+	function resize() {
+		const rect = container.getBoundingClientRect();
+		const dpr = Math.min(window.devicePixelRatio, 2);
+		canvas.width = rect.width * dpr;
+		canvas.height = rect.height * dpr;
+	}
+
+	function draw() {
+		const dpr = Math.min(window.devicePixelRatio, 2);
+		const w = canvas.width / dpr;
+		const h = canvas.height / dpr;
+
+		ctx.save();
+		ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+		// Background with subtle radial gradient
+		const grad = ctx.createRadialGradient(w / 2, h * 0.35, 0, w / 2, h * 0.35, Math.max(w, h));
+		grad.addColorStop(0, '#12121a');
+		grad.addColorStop(1, '#0a0a0f');
+		ctx.fillStyle = grad;
+		ctx.fillRect(0, 0, w, h);
+
+		// Coordinate mapping
+		const maxReach = L1 + L2;
+		const scale = Math.min(w, h) * 0.38 / maxReach;
+		const pivotX = w / 2;
+		const pivotY = h * 0.3;
+
+		const [t1, , t2] = state;
+		const x1 = L1 * Math.sin(t1);
+		const y1 = L1 * Math.cos(t1);
+		const x2 = x1 + L2 * Math.sin(t2);
+		const y2 = y1 + L2 * Math.cos(t2);
+
+		const px = (sx: number) => pivotX + sx * scale;
+		const py = (sy: number) => pivotY + sy * scale;
+
+		// Draw trail in batches for fading effect
+		if (trail.length > 1) {
+			const batchSize = 100;
+			const numBatches = Math.ceil(trail.length / batchSize);
+			for (let b = 0; b < numBatches; b++) {
+				const start = b * batchSize;
+				const end = Math.min((b + 1) * batchSize, trail.length);
+				const alpha = ((b + 1) / numBatches) * 0.7;
+				ctx.strokeStyle = `rgba(0, 240, 255, ${alpha})`;
+				ctx.lineWidth = 1.5;
+				ctx.beginPath();
+				ctx.moveTo(px(trail[start].x), py(trail[start].y));
+				for (let i = start + 1; i < end; i++) {
+					ctx.lineTo(px(trail[i].x), py(trail[i].y));
+				}
+				ctx.stroke();
+			}
+		}
+
+		// Arms
+		ctx.strokeStyle = 'rgba(255, 255, 255, 0.8)';
+		ctx.lineWidth = 2;
+		ctx.beginPath();
+		ctx.moveTo(pivotX, pivotY);
+		ctx.lineTo(px(x1), py(y1));
+		ctx.lineTo(px(x2), py(y2));
+		ctx.stroke();
+
+		// Pivot
+		ctx.fillStyle = '#606070';
+		ctx.beginPath();
+		ctx.arc(pivotX, pivotY, 4, 0, Math.PI * 2);
+		ctx.fill();
+
+		// Bob 1
+		ctx.shadowColor = '#ff6060';
+		ctx.shadowBlur = 10;
+		ctx.fillStyle = '#ff6060';
+		ctx.beginPath();
+		ctx.arc(px(x1), py(y1), 6 + m1 * 2.5, 0, Math.PI * 2);
+		ctx.fill();
+		ctx.shadowBlur = 0;
+
+		// Bob 2
+		ctx.shadowColor = '#00f0ff';
+		ctx.shadowBlur = 15;
+		ctx.fillStyle = '#00f0ff';
+		ctx.beginPath();
+		ctx.arc(px(x2), py(y2), 6 + m2 * 2.5, 0, Math.PI * 2);
+		ctx.fill();
+		ctx.shadowBlur = 0;
+
+		ctx.restore();
+	}
+
+	function animate() {
+		if (running) {
+			for (let i = 0; i < stepsPerFrame; i++) {
+				state = rk4Step(state);
+			}
+			const [t1, , t2] = state;
+			const trailX = L1 * Math.sin(t1) + L2 * Math.sin(t2);
+			const trailY = L1 * Math.cos(t1) + L2 * Math.cos(t2);
+			trail.push({ x: trailX, y: trailY });
+			if (trail.length > MAX_TRAIL) trail.shift();
+		}
+		draw();
+		requestAnimationFrame(animate);
+	}
+
+	function reset() {
+		L1 = parseFloat(l1Slider.value);
+		L2 = parseFloat(l2Slider.value);
+		m1 = parseFloat(m1Slider.value);
+		m2 = parseFloat(m2Slider.value);
+		const a1 = parseFloat(a1Slider.value) * Math.PI / 180;
+		const a2 = parseFloat(a2Slider.value) * Math.PI / 180;
+		state = [a1, 0, a2, 0];
+		trail = [];
+		running = true;
+		playBtn.textContent = '⏸ Pause';
+	}
+
+	// Slider labels
+	l1Slider.addEventListener('input', () => { l1Val.textContent = parseFloat(l1Slider.value).toFixed(1); });
+	l2Slider.addEventListener('input', () => { l2Val.textContent = parseFloat(l2Slider.value).toFixed(1); });
+	m1Slider.addEventListener('input', () => { m1Val.textContent = parseFloat(m1Slider.value).toFixed(1); });
+	m2Slider.addEventListener('input', () => { m2Val.textContent = parseFloat(m2Slider.value).toFixed(1); });
+	a1Slider.addEventListener('input', () => { a1Val.textContent = a1Slider.value; });
+	a2Slider.addEventListener('input', () => { a2Val.textContent = a2Slider.value; });
+
+	playBtn.addEventListener('click', () => {
+		running = !running;
+		playBtn.textContent = running ? '⏸ Pause' : '▶ Play';
+	});
+	resetBtn.addEventListener('click', reset);
+	window.addEventListener('resize', resize);
+
+	// Init
+	resize();
+	reset();
+	animate();
+</script>
+
+<style>
+	#dp-wrapper {
+		margin: 2rem 0;
+	}
+
+	#dp-canvas-container {
+		width: 100%;
+		aspect-ratio: 16 / 10;
+		border-radius: 12px 12px 0 0;
+		overflow: hidden;
+		background: #0a0a0f;
+		border: 1px solid rgba(0, 240, 255, 0.15);
+		border-bottom: none;
+		position: relative;
+	}
+
+	#dp-canvas {
+		width: 100%;
+		height: 100%;
+		display: block;
+	}
+
+	#dp-controls {
+		background: #111118;
+		border: 1px solid rgba(0, 240, 255, 0.15);
+		border-radius: 0 0 12px 12px;
+		padding: 1rem 1.25rem;
+	}
+
+	.dp-controls-grid {
+		display: grid;
+		grid-template-columns: 1fr 1fr;
+		gap: 0.6rem 1.5rem;
+	}
+
+	.dp-control {
+		display: flex;
+		flex-direction: column;
+		gap: 0.25rem;
+	}
+
+	.dp-control-header {
+		display: flex;
+		justify-content: space-between;
+		align-items: center;
+		font-size: 0.8rem;
+		color: rgba(255, 255, 255, 0.5);
+	}
+
+	.dp-label {
+		color: rgba(0, 240, 255, 0.8);
+		font-weight: 700;
+	}
+
+	input[type="range"] {
+		-webkit-appearance: none;
+		appearance: none;
+		width: 100%;
+		height: 4px;
+		background: rgba(255, 255, 255, 0.1);
+		border-radius: 2px;
+		outline: none;
+		cursor: pointer;
+	}
+
+	input[type="range"]::-webkit-slider-thumb {
+		-webkit-appearance: none;
+		appearance: none;
+		width: 14px;
+		height: 14px;
+		border-radius: 50%;
+		background: #00f0ff;
+		cursor: pointer;
+		box-shadow: 0 0 8px rgba(0, 240, 255, 0.4);
+	}
+
+	input[type="range"]::-moz-range-thumb {
+		width: 14px;
+		height: 14px;
+		border-radius: 50%;
+		background: #00f0ff;
+		cursor: pointer;
+		border: none;
+		box-shadow: 0 0 8px rgba(0, 240, 255, 0.4);
+	}
+
+	.dp-buttons {
+		display: flex;
+		gap: 0.75rem;
+		margin-top: 1rem;
+	}
+
+	.dp-buttons button {
+		flex: 1;
+		padding: 0.5rem 1rem;
+		background: #0a0a0f;
+		color: rgba(255, 255, 255, 0.7);
+		border: 1px solid rgba(0, 240, 255, 0.15);
+		border-radius: 6px;
+		cursor: pointer;
+		font-family: inherit;
+		font-size: 0.85rem;
+		transition: all 0.2s ease;
+	}
+
+	.dp-buttons button:hover {
+		border-color: #00f0ff;
+		color: #00f0ff;
+	}
+
+	.dp-controls-hint {
+		display: block;
+		text-align: center;
+		font-size: 0.7rem;
+		color: rgba(255, 255, 255, 0.25);
+		margin-top: 0.75rem;
+	}
+
+	@media (max-width: 500px) {
+		.dp-controls-grid {
+			grid-template-columns: 1fr;
+		}
+	}
+</style>

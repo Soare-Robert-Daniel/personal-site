@@ -1,0 +1,394 @@
+---
+---
+
+<div id="bs-wrapper">
+	<div id="bs-canvas-container">
+		<canvas id="bs-canvas"></canvas>
+	</div>
+	<div id="bs-controls">
+		<div class="bs-controls-grid">
+			<div class="bs-control">
+				<div class="bs-control-header">
+					<span class="bs-label">Speed</span>
+					<span><span id="bs-speed-val">5</span>x</span>
+				</div>
+				<input type="range" id="bs-speed" min="1" max="20" step="1" value="5" />
+			</div>
+			<div class="bs-control">
+				<div class="bs-control-header">
+					<span class="bs-label">Array Size</span>
+					<span id="bs-size-val">30</span>
+				</div>
+				<input type="range" id="bs-size" min="10" max="50" step="1" value="30" />
+			</div>
+		</div>
+		<div class="bs-buttons">
+			<button id="bs-play">▶ Play</button>
+			<button id="bs-reset">↺ Reset</button>
+		</div>
+		<span class="bs-controls-hint">adjust speed, then press Reset to start over</span>
+	</div>
+</div>
+
+<script>
+	const canvas = document.getElementById('bs-canvas') as HTMLCanvasElement;
+	const container = document.getElementById('bs-canvas-container')!;
+	const ctx = canvas.getContext('2d')!;
+
+	const speedSlider = document.getElementById('bs-speed') as HTMLInputElement;
+	const sizeSlider = document.getElementById('bs-size') as HTMLInputElement;
+	const speedVal = document.getElementById('bs-speed-val')!;
+	const sizeVal = document.getElementById('bs-size-val')!;
+	const playBtn = document.getElementById('bs-play') as HTMLButtonElement;
+	const resetBtn = document.getElementById('bs-reset') as HTMLButtonElement;
+
+	let arr: number[] = [];
+	let running = false;
+	let sorted = false;
+
+	// Bubble sort state
+	let passIndex = 0; // current pass (i)
+	let posIndex = 0; // current position in pass (j)
+	let swappedThisPass = false;
+	let sortedFrom = 0; // bars from this index onward are sorted
+
+	// Animation
+	let frameCount = 0;
+	let swapping = false; // true when current step is a swap
+	let celebrationStart = -1;
+	const CELEBRATION_DURATION = 60; // frames
+
+	function generateArray(size: number) {
+		arr = [];
+		for (let i = 0; i < size; i++) {
+			arr.push(Math.random() * 0.85 + 0.15); // values between 0.15 and 1.0
+		}
+	}
+
+	function resize() {
+		const rect = container.getBoundingClientRect();
+		const dpr = Math.min(window.devicePixelRatio, 2);
+		canvas.width = rect.width * dpr;
+		canvas.height = rect.height * dpr;
+	}
+
+	function getBarColor(index: number): string {
+		// Already sorted
+		if (sortedFrom > 0 && index >= arr.length - sortedFrom) {
+			return '#00ff88';
+		}
+		// Currently comparing pair
+		if (running && !sorted && index === posIndex) {
+			return swapping ? '#ff6060' : '#ffcc00';
+		}
+		if (running && !sorted && index === posIndex + 1) {
+			return swapping ? '#ff6060' : '#ffcc00';
+		}
+		// Default cyan with slight opacity variation
+		const opacity = 0.7 + (index % 3) * 0.1;
+		return `rgba(0, 240, 255, ${opacity})`;
+	}
+
+	function draw() {
+		const dpr = Math.min(window.devicePixelRatio, 2);
+		const w = canvas.width / dpr;
+		const h = canvas.height / dpr;
+
+		ctx.save();
+		ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+		// Background
+		const grad = ctx.createRadialGradient(w / 2, h * 0.5, 0, w / 2, h * 0.5, Math.max(w, h));
+		grad.addColorStop(0, '#12121a');
+		grad.addColorStop(1, '#0a0a0f');
+		ctx.fillStyle = grad;
+		ctx.fillRect(0, 0, w, h);
+
+		const n = arr.length;
+		const padding = w * 0.05;
+		const totalBarWidth = w - padding * 2;
+		const gap = Math.max(1, totalBarWidth * 0.02 / n);
+		const barWidth = (totalBarWidth - gap * (n - 1)) / n;
+		const maxBarHeight = h * 0.85;
+		const baseY = h * 0.95;
+
+		// Celebration flash effect
+		let celebrationAlpha = 0;
+		if (celebrationStart >= 0) {
+			const elapsed = frameCount - celebrationStart;
+			if (elapsed < CELEBRATION_DURATION) {
+				// Pulsing effect: sin wave
+				celebrationAlpha = Math.sin((elapsed / CELEBRATION_DURATION) * Math.PI * 3) * 0.4;
+				if (celebrationAlpha < 0) celebrationAlpha = 0;
+			}
+		}
+
+		for (let i = 0; i < n; i++) {
+			const x = padding + i * (barWidth + gap);
+			const barH = arr[i] * maxBarHeight;
+			const y = baseY - barH;
+
+			ctx.fillStyle = getBarColor(i);
+
+			// Add glow for active bars
+			if (running && !sorted && (i === posIndex || i === posIndex + 1)) {
+				ctx.shadowColor = swapping ? '#ff6060' : '#ffcc00';
+				ctx.shadowBlur = 12;
+			} else if (sortedFrom > 0 && i >= arr.length - sortedFrom) {
+				ctx.shadowColor = '#00ff88';
+				ctx.shadowBlur = 6;
+			} else {
+				ctx.shadowColor = '#00f0ff';
+				ctx.shadowBlur = 4;
+			}
+
+			ctx.beginPath();
+			const radius = Math.min(barWidth / 2, 3);
+			ctx.moveTo(x + radius, y);
+			ctx.lineTo(x + barWidth - radius, y);
+			ctx.quadraticCurveTo(x + barWidth, y, x + barWidth, y + radius);
+			ctx.lineTo(x + barWidth, baseY);
+			ctx.lineTo(x, baseY);
+			ctx.lineTo(x, y + radius);
+			ctx.quadraticCurveTo(x, y, x + radius, y);
+			ctx.fill();
+
+			// Celebration overlay
+			if (celebrationAlpha > 0) {
+				ctx.fillStyle = `rgba(255, 255, 255, ${celebrationAlpha})`;
+				ctx.fill();
+			}
+
+			ctx.shadowBlur = 0;
+		}
+
+		ctx.restore();
+	}
+
+	function stepSort() {
+		if (sorted) return;
+
+		const n = arr.length;
+		const limit = n - 1 - passIndex;
+
+		// Compare arr[posIndex] and arr[posIndex + 1]
+		if (arr[posIndex] > arr[posIndex + 1]) {
+			// Swap
+			const temp = arr[posIndex];
+			arr[posIndex] = arr[posIndex + 1];
+			arr[posIndex + 1] = temp;
+			swapping = true;
+			swappedThisPass = true;
+		} else {
+			swapping = false;
+		}
+
+		// Advance position
+		posIndex++;
+
+		if (posIndex >= limit) {
+			// End of this pass
+			sortedFrom = passIndex + 1;
+
+			if (!swappedThisPass) {
+				// No swaps this pass — array is sorted
+				sortedFrom = n;
+				sorted = true;
+				running = false;
+				playBtn.textContent = '▶ Play';
+				celebrationStart = frameCount;
+				return;
+			}
+
+			// Start next pass
+			passIndex++;
+			posIndex = 0;
+			swappedThisPass = false;
+			swapping = false;
+
+			if (passIndex >= n - 1) {
+				// All passes done
+				sortedFrom = n;
+				sorted = true;
+				running = false;
+				playBtn.textContent = '▶ Play';
+				celebrationStart = frameCount;
+			}
+		}
+	}
+
+	function animate() {
+		frameCount++;
+
+		if (running && !sorted) {
+			const speed = parseInt(speedSlider.value);
+			// Step multiple times per frame based on speed
+			if (frameCount % Math.max(1, Math.floor(12 / speed)) === 0) {
+				stepSort();
+			}
+		}
+
+		draw();
+		requestAnimationFrame(animate);
+	}
+
+	function reset() {
+		const size = parseInt(sizeSlider.value);
+		generateArray(size);
+		passIndex = 0;
+		posIndex = 0;
+		swappedThisPass = false;
+		swapping = false;
+		sorted = false;
+		sortedFrom = 0;
+		celebrationStart = -1;
+		running = false;
+		playBtn.textContent = '▶ Play';
+	}
+
+	// Slider labels
+	speedSlider.addEventListener('input', () => {
+		speedVal.textContent = speedSlider.value;
+	});
+	sizeSlider.addEventListener('input', () => {
+		sizeVal.textContent = sizeSlider.value;
+	});
+
+	playBtn.addEventListener('click', () => {
+		if (sorted) return;
+		running = !running;
+		playBtn.textContent = running ? '⏸ Pause' : '▶ Play';
+	});
+	resetBtn.addEventListener('click', reset);
+	window.addEventListener('resize', resize);
+
+	// Init
+	resize();
+	reset();
+	animate();
+</script>
+
+<style>
+	#bs-wrapper {
+		margin: 2rem 0;
+	}
+
+	#bs-canvas-container {
+		width: 100%;
+		aspect-ratio: 16 / 10;
+		border-radius: 12px 12px 0 0;
+		overflow: hidden;
+		background: #0a0a0f;
+		border: 1px solid rgba(0, 240, 255, 0.15);
+		border-bottom: none;
+		position: relative;
+	}
+
+	#bs-canvas {
+		width: 100%;
+		height: 100%;
+		display: block;
+	}
+
+	#bs-controls {
+		background: #111118;
+		border: 1px solid rgba(0, 240, 255, 0.15);
+		border-radius: 0 0 12px 12px;
+		padding: 1rem 1.25rem;
+	}
+
+	.bs-controls-grid {
+		display: grid;
+		grid-template-columns: 1fr 1fr;
+		gap: 0.6rem 1.5rem;
+	}
+
+	.bs-control {
+		display: flex;
+		flex-direction: column;
+		gap: 0.25rem;
+	}
+
+	.bs-control-header {
+		display: flex;
+		justify-content: space-between;
+		align-items: center;
+		font-size: 0.8rem;
+		color: rgba(255, 255, 255, 0.5);
+	}
+
+	.bs-label {
+		color: rgba(0, 240, 255, 0.8);
+		font-weight: 700;
+	}
+
+	input[type="range"] {
+		-webkit-appearance: none;
+		appearance: none;
+		width: 100%;
+		height: 4px;
+		background: rgba(255, 255, 255, 0.1);
+		border-radius: 2px;
+		outline: none;
+		cursor: pointer;
+	}
+
+	input[type="range"]::-webkit-slider-thumb {
+		-webkit-appearance: none;
+		appearance: none;
+		width: 14px;
+		height: 14px;
+		border-radius: 50%;
+		background: #00f0ff;
+		cursor: pointer;
+		box-shadow: 0 0 8px rgba(0, 240, 255, 0.4);
+	}
+
+	input[type="range"]::-moz-range-thumb {
+		width: 14px;
+		height: 14px;
+		border-radius: 50%;
+		background: #00f0ff;
+		cursor: pointer;
+		border: none;
+		box-shadow: 0 0 8px rgba(0, 240, 255, 0.4);
+	}
+
+	.bs-buttons {
+		display: flex;
+		gap: 0.75rem;
+		margin-top: 1rem;
+	}
+
+	.bs-buttons button {
+		flex: 1;
+		padding: 0.5rem 1rem;
+		background: #0a0a0f;
+		color: rgba(255, 255, 255, 0.7);
+		border: 1px solid rgba(0, 240, 255, 0.15);
+		border-radius: 6px;
+		cursor: pointer;
+		font-family: inherit;
+		font-size: 0.85rem;
+		transition: all 0.2s ease;
+	}
+
+	.bs-buttons button:hover {
+		border-color: #00f0ff;
+		color: #00f0ff;
+	}
+
+	.bs-controls-hint {
+		display: block;
+		text-align: center;
+		font-size: 0.7rem;
+		color: rgba(255, 255, 255, 0.25);
+		margin-top: 0.75rem;
+	}
+
+	@media (max-width: 500px) {
+		.bs-controls-grid {
+			grid-template-columns: 1fr;
+		}
+	}
+</style>

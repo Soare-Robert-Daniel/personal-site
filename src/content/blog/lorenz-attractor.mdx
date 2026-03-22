@@ -1,0 +1,90 @@
+---
+title: "Prompt Training: The Lorenz Attractor"
+description: "Exploring the beautiful chaos of the Lorenz system — the butterfly-shaped strange attractor that launched chaos theory."
+pubDate: "2026-02-22"
+aiGenerated: true
+aiConversationUrl: "https://ampcode.com/threads/T-019c85f8-0a53-717b-a189-de06ab17cc74"
+---
+
+import LorenzVisualization from '../../components/LorenzVisualization.astro';
+import Math from '../../components/Math.astro';
+
+In 1963, meteorologist **Edward Lorenz** was running a simplified weather simulation when he stumbled upon something extraordinary. By rounding a single initial value from `0.506127` to `0.506`, he got a completely different weather forecast. This tiny change — smaller than a breath of wind — led to the birth of **chaos theory** and the famous *butterfly effect*.
+
+The system he discovered produces one of the most iconic shapes in mathematics: the **Lorenz attractor**.
+
+## The System
+
+The Lorenz system is defined by three coupled ordinary differential equations:
+
+<Math d="\frac{dx}{dt} = \sigma(y - x)" />
+
+<Math d="\frac{dy}{dt} = x(\rho - z) - y" />
+
+<Math d="\frac{dz}{dt} = xy - \beta z" />
+
+Where the classic parameter values are:
+
+- $\sigma = 10$ — the **Prandtl number** (ratio of viscous to thermal diffusion)
+- $\rho = 28$ — the **Rayleigh number** (driving force of convection)
+- $\beta = 8/3$ — a geometric factor related to the cell aspect ratio
+
+These parameters place the system in the **chaotic regime**, where the trajectory never repeats and never settles into a fixed point or periodic orbit — yet it remains bounded, tracing the iconic butterfly wings forever.
+
+## Interactive Visualization
+
+<LorenzVisualization />
+
+## Numerical Integration
+
+Here's a straightforward Python implementation using the **Euler method** to integrate the Lorenz system:
+
+```python
+import numpy as np
+import matplotlib.pyplot as plt
+
+def lorenz(state, sigma=10, rho=28, beta=8/3):
+    x, y, z = state
+    return np.array([
+        sigma * (y - x),
+        x * (rho - z) - y,
+        x * y - beta * z
+    ])
+
+# Integrate using Euler's method
+dt = 0.005
+steps = 30000
+trajectory = np.zeros((steps, 3))
+trajectory[0] = [0.1, 0, 0]
+
+for i in range(1, steps):
+    trajectory[i] = trajectory[i-1] + lorenz(trajectory[i-1]) * dt
+
+# Plot
+fig = plt.figure(figsize=(10, 8))
+ax = fig.add_subplot(111, projection="3d")
+ax.plot(*trajectory.T, lw=0.3, color="cyan")
+ax.set_facecolor("black")
+fig.patch.set_facecolor("black")
+ax.set_axis_off()
+plt.tight_layout()
+plt.show()
+```
+
+## Sensitivity to Initial Conditions
+
+The hallmark of chaos is **sensitivity to initial conditions**. Two trajectories starting at nearly identical points will eventually diverge exponentially — this is quantified by the system's positive **Lyapunov exponent** ($\lambda \approx 0.9$).
+
+The divergence between two nearby trajectories grows as:
+
+<Math d="\|\delta(t)\| \sim \|\delta(0)\| \, e^{\lambda t}" />
+
+In practical terms: even with perfect knowledge of the equations, long-term prediction is impossible because any measurement has finite precision. Lorenz famously summarized this as:
+
+> *"Prediction is very difficult, especially about the future."*
+
+This is why weather forecasts degrade after about a week — the atmosphere is a chaotic system, and our measurements can never be infinitely precise.
+
+## Why It Matters
+
+The Lorenz attractor is more than a mathematical curiosity. It demonstrated that **deterministic systems can produce unpredictable behavior** — a profound insight that reshaped physics, biology, economics, and philosophy. The equations are simple. The behavior is not. That's the beauty of chaos.
