@@ -5,35 +5,42 @@ import FormattedDate from '../../components/FormattedDate.astro';
 import Header from '../../components/Header.astro';
 import { getCollection } from 'astro:content';
 
-const posts = (await getCollection('blog')).sort(
+const allPosts = (await getCollection('blog')).sort(
 	(a, b) => b.data.pubDate.valueOf() - a.data.pubDate.valueOf(),
 );
+
+const posts = allPosts.filter((post) => post.data.category === 'junk');
 ---
 
 <!doctype html>
 <html lang="en">
 	<head>
-		<BaseHead title="Blog | Soare Robert Daniel" description="Blog posts and technical writing" />
+		<BaseHead title="Projects | Soare Robert Daniel" description="Projects, blog posts and more" />
 	</head>
 	<body>
 		<Header />
 		<main>
 			<section>
-				<h1>Blog</h1>
+				<h1>Projects</h1>
 				<div class="divider"></div>
+				<nav class="tabs">
+					<a href="/projects" class="tab">Blog</a>
+					<a href="/projects/projects" class="tab">Projects</a>
+					<a href="/projects/junk" class="tab active">Junk</a>
+				</nav>
 				{posts.length === 0 ? (
 					<div class="coming-soon">
 						<span class="soon-text">Coming Soon</span>
-						<p>I'm working on some interesting posts. Stay tuned!</p>
+						<p>No junk here... yet.</p>
 					</div>
 				) : (
 					<ul class="post-list">
 						{posts.map((post) => (
 							<li>
-								<a href={`/blog/${post.id}/`} class="card post-card">
+								<a href={`/projects/${post.id}/`} class="card post-card">
 									<div class="post-meta">
 										<FormattedDate date={post.data.pubDate} />
-										{post.data.aiGenerated && <span class="ai-label">🤖 AI Generated</span>}
+										{post.data.aiGenerated && <span class="ai-label">AI Generated</span>}
 									</div>
 									<h2>{post.data.title}</h2>
 									<p>{post.data.description}</p>
@@ -51,6 +58,28 @@ const posts = (await getCollection('blog')).sort(
 <style>
 	h1 {
 		margin-bottom: 0.5rem;
+	}
+	.tabs {
+		display: flex;
+		gap: 0;
+		margin-bottom: 1.5rem;
+		border-bottom: 1px solid var(--border-subtle);
+	}
+	.tab {
+		padding: 0.75rem 1.25rem;
+		color: var(--text-muted);
+		text-decoration: none;
+		font-size: 0.95rem;
+		font-weight: 500;
+		border-bottom: 2px solid transparent;
+		transition: color 0.2s ease, border-color 0.2s ease;
+	}
+	.tab:hover {
+		color: var(--text-primary);
+	}
+	.tab.active {
+		color: var(--accent);
+		border-bottom-color: var(--accent);
 	}
 	.coming-soon {
 		text-align: center;
