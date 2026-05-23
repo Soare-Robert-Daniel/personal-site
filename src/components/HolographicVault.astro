@@ -1,0 +1,644 @@
+---
+---
+
+<div id="hv-wrapper">
+	<div id="hv-stage-container">
+		<div id="hv-hud">
+			<div class="hv-hud-item"><span class="hv-hud-label">Round</span><span id="hv-round">0</span></div>
+			<div class="hv-hud-item"><span class="hv-hud-label">Score</span><span id="hv-score">0</span></div>
+			<div class="hv-hud-item"><span class="hv-hud-label">Timer</span><span id="hv-timer">—</span></div>
+			<div class="hv-hud-item"><span class="hv-hud-label">Best</span><span id="hv-best">0</span></div>
+		</div>
+		<div id="hv-canvas-wrap">
+			<canvas id="hv-canvas" role="application" aria-label="Holographic Vault 3D puzzle"></canvas>
+			<div id="hv-target" class="hv-target hv-hidden" aria-live="polite">
+				Find the <span id="hv-target-name">—</span>
+			</div>
+			<span class="hv-hint">drag to rotate · scroll to zoom · click to place your guess</span>
+		</div>
+		<div id="hv-status" aria-live="polite">Press Start. Memorise the artifacts, the vault will rotate.</div>
+	</div>
+	<div id="hv-controls">
+		<div class="hv-buttons">
+			<button id="hv-start" type="button">▶ Start</button>
+			<button id="hv-next" type="button" disabled>⇢ Next</button>
+			<button id="hv-restart" type="button" disabled>↺ Restart</button>
+		</div>
+		<span class="hv-controls-hint">keys: space = start / next · R = restart</span>
+	</div>
+</div>
+
+<script>
+	import * as THREE from 'three';
+	import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+	type Shape = 'sphere' | 'cube' | 'pyramid';
+	type ColorKey = 'red' | 'blue' | 'green' | 'yellow' | 'magenta';
+	type Phase = 'idle' | 'reveal' | 'shuffle' | 'challenge' | 'result';
+
+	interface Artifact {
+		shape: Shape;
+		color: ColorKey;
+		hex: number;
+		localPos: THREE.Vector3;
+		mesh: THREE.Mesh;
+		halo: THREE.Mesh;
+		root: THREE.Group;
+	}
+
+	const COLORS: { key: ColorKey; hex: number; label: string }[] = [
+		{ key: 'red', hex: 0xff4d4d, label: 'RED' },
+		{ key: 'blue', hex: 0x4da6ff, label: 'BLUE' },
+		{ key: 'green', hex: 0x4dff88, label: 'GREEN' },
+		{ key: 'yellow', hex: 0xffd24d, label: 'YELLOW' },
+		{ key: 'magenta', hex: 0xff66dd, label: 'MAGENTA' },
+	];
+
+	const SHAPES: Shape[] = ['sphere', 'cube', 'pyramid'];
+	const SHAPE_LABEL: Record<Shape, string> = {
+		sphere: 'SPHERE',
+		cube: 'CUBE',
+		pyramid: 'PYRAMID',
+	};
+
+	const VAULT_SIZE = 3;
+	const HALF = VAULT_SIZE / 2;
+	const MARGIN = 0.55;
+
+	const BEST_KEY = 'holo-vault:best';
+
+	const canvas = document.getElementById('hv-canvas') as HTMLCanvasElement;
+	const wrap = document.getElementById('hv-canvas-wrap')!;
+	const roundEl = document.getElementById('hv-round')!;
+	const scoreEl = document.getElementById('hv-score')!;
+	const timerEl = document.getElementById('hv-timer')!;
+	const bestEl = document.getElementById('hv-best')!;
+	const statusEl = document.getElementById('hv-status')!;
+	const targetEl = document.getElementById('hv-target')!;
+	const targetNameEl = document.getElementById('hv-target-name')!;
+	const startBtn = document.getElementById('hv-start') as HTMLButtonElement;
+	const nextBtn = document.getElementById('hv-next') as HTMLButtonElement;
+	const restartBtn = document.getElementById('hv-restart') as HTMLButtonElement;
+
+	// ----- Three.js scaffolding -----
+
+	const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true });
+	renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+
+	const scene = new THREE.Scene();
+	const camera = new THREE.PerspectiveCamera(50, wrap.clientWidth / wrap.clientHeight, 0.1, 500);
+	camera.position.set(0, 0, 6.5);
+
+	const controls = new OrbitControls(camera, renderer.domElement);
+	controls.enableDamping = true;
+	controls.dampingFactor = 0.08;
+	controls.enablePan = false;
+	controls.minDistance = 3.5;
+	controls.maxDistance = 10;
+
+	scene.add(new THREE.AmbientLight(0xffffff, 0.6));
+	const keyLight = new THREE.DirectionalLight(0xffffff, 0.7);
+	keyLight.position.set(3, 4, 5);
+	scene.add(keyLight);
+
+	// Vault group (wireframe + artifacts under a single transform).
+	const vaultGroup = new THREE.Group();
+	scene.add(vaultGroup);
+
+	const boxGeom = new THREE.BoxGeometry(VAULT_SIZE, VAULT_SIZE, VAULT_SIZE);
+	const edges = new THREE.LineSegments(
+		new THREE.EdgesGeometry(boxGeom),
+		new THREE.LineBasicMaterial({ color: 0x00f0ff, transparent: true, opacity: 0.65 })
+	);
+	vaultGroup.add(edges);
+
+	const glassMat = new THREE.MeshBasicMaterial({
+		color: 0x00f0ff,
+		transparent: true,
+		opacity: 0.04,
+		side: THREE.DoubleSide,
+		depthWrite: false,
+	});
+	vaultGroup.add(new THREE.Mesh(boxGeom, glassMat));
+
+	// Marker used after a guess to reveal the true position.
+	const markerGeom = new THREE.SphereGeometry(0.18, 18, 18);
+	const markerMat = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.9 });
+	const marker = new THREE.Mesh(markerGeom, markerMat);
+	marker.visible = false;
+	scene.add(marker);
+
+	const markerRingGeom = new THREE.RingGeometry(0.25, 0.3, 32);
+	const markerRingMat = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.6, side: THREE.DoubleSide });
+	const markerRing = new THREE.Mesh(markerRingGeom, markerRingMat);
+	markerRing.visible = false;
+	scene.add(markerRing);
+
+	// ----- Game state -----
+
+	let phase: Phase = 'idle';
+	let round = 0;
+	let score = 0;
+	let best = 0;
+	let artifacts: Artifact[] = [];
+	let target: Artifact | null = null;
+	let revealTimer: number | null = null;
+	let revealEndsAt = 0;
+	let shuffleAnim: { start: number; duration: number; from: THREE.Quaternion; to: THREE.Quaternion } | null = null;
+
+	const raycaster = new THREE.Raycaster();
+	const ndc = new THREE.Vector2();
+	const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+	function loadBest() {
+		try {
+			const b = parseInt(localStorage.getItem(BEST_KEY) || '0', 10);
+			if (!Number.isNaN(b)) best = b;
+		} catch (_) {}
+		bestEl.textContent = String(best);
+	}
+	function saveBest() {
+		try { localStorage.setItem(BEST_KEY, String(best)); } catch (_) {}
+	}
+
+	function setStatus(text: string) { statusEl.textContent = text; }
+
+	function buildArtifactMesh(shape: Shape, hex: number): { mesh: THREE.Mesh; halo: THREE.Mesh; root: THREE.Group } {
+		const group = new THREE.Group();
+		let geom: THREE.BufferGeometry;
+		switch (shape) {
+			case 'sphere': geom = new THREE.SphereGeometry(0.32, 24, 24); break;
+			case 'cube': geom = new THREE.BoxGeometry(0.52, 0.52, 0.52); break;
+			case 'pyramid': geom = new THREE.ConeGeometry(0.42, 0.7, 4); break;
+		}
+		const mat = new THREE.MeshStandardMaterial({
+			color: hex,
+			emissive: hex,
+			emissiveIntensity: 0.45,
+			roughness: 0.35,
+			metalness: 0.2,
+		});
+		const mesh = new THREE.Mesh(geom, mat);
+		group.add(mesh);
+
+		const halo = new THREE.Mesh(
+			new THREE.SphereGeometry(0.55, 18, 18),
+			new THREE.MeshBasicMaterial({
+				color: hex,
+				transparent: true,
+				opacity: 0.15,
+				blending: THREE.AdditiveBlending,
+				depthWrite: false,
+			})
+		);
+		group.add(halo);
+
+		return { mesh, halo, root: group };
+	}
+
+	function randomPositionAvoiding(existing: THREE.Vector3[]): THREE.Vector3 {
+		const range = HALF - MARGIN;
+		for (let attempts = 0; attempts < 40; attempts++) {
+			const p = new THREE.Vector3(
+				(Math.random() * 2 - 1) * range,
+				(Math.random() * 2 - 1) * range,
+				(Math.random() * 2 - 1) * range
+			);
+			if (existing.every((q) => q.distanceTo(p) > 0.95)) return p;
+		}
+		return new THREE.Vector3(
+			(Math.random() * 2 - 1) * range,
+			(Math.random() * 2 - 1) * range,
+			(Math.random() * 2 - 1) * range
+		);
+	}
+
+	function clearArtifacts() {
+		for (const a of artifacts) {
+			vaultGroup.remove(a.root);
+			a.mesh.geometry.dispose();
+			(a.mesh.material as THREE.Material).dispose();
+			a.halo.geometry.dispose();
+			(a.halo.material as THREE.Material).dispose();
+		}
+		artifacts = [];
+		target = null;
+	}
+
+	function spawnArtifacts() {
+		clearArtifacts();
+		const count = Math.min(3 + Math.floor(round / 2), 7);
+
+		const positions: THREE.Vector3[] = [];
+		const usedCombos = new Set<string>();
+
+		for (let i = 0; i < count; i++) {
+			let shape: Shape;
+			let color: { key: ColorKey; hex: number; label: string };
+			let combo: string;
+			let tries = 0;
+			do {
+				shape = SHAPES[Math.floor(Math.random() * SHAPES.length)];
+				color = COLORS[Math.floor(Math.random() * COLORS.length)];
+				combo = `${shape}:${color.key}`;
+				tries++;
+			} while (usedCombos.has(combo) && tries < 30);
+			usedCombos.add(combo);
+
+			const localPos = randomPositionAvoiding(positions);
+			positions.push(localPos);
+
+			const { mesh, halo, root } = buildArtifactMesh(shape, color.hex);
+			root.position.copy(localPos);
+			vaultGroup.add(root);
+			artifacts.push({ shape, color: color.key, hex: color.hex, localPos, mesh, halo, root });
+		}
+	}
+
+	function setArtifactsVisible(visible: boolean) {
+		for (const a of artifacts) a.root.visible = visible;
+	}
+
+	// ----- Phase transitions -----
+
+	function enterIdle() {
+		phase = 'idle';
+		controls.enabled = true;
+		clearArtifacts();
+		vaultGroup.quaternion.identity();
+		marker.visible = false;
+		markerRing.visible = false;
+		targetEl.classList.add('hv-hidden');
+		timerEl.textContent = '—';
+		startBtn.disabled = false;
+		nextBtn.disabled = true;
+		restartBtn.disabled = true;
+		setStatus('Press Start. Memorise the artifacts, the vault will rotate.');
+	}
+
+	function startRevealPhase() {
+		phase = 'reveal';
+		controls.enabled = true;
+		marker.visible = false;
+		markerRing.visible = false;
+		targetEl.classList.add('hv-hidden');
+		vaultGroup.quaternion.identity();
+
+		spawnArtifacts();
+		setArtifactsVisible(true);
+
+		round += 1;
+		roundEl.textContent = String(round);
+
+		const revealDuration = Math.max(2500, 5000 - (round - 1) * 250);
+		revealEndsAt = performance.now() + revealDuration;
+
+		nextBtn.disabled = true;
+		restartBtn.disabled = false;
+		startBtn.disabled = true;
+
+		setStatus('Memorise the artifacts. Rotate the vault to inspect.');
+		updateTimerDisplay();
+		if (revealTimer !== null) clearInterval(revealTimer);
+		revealTimer = window.setInterval(updateTimerDisplay, 100);
+	}
+
+	function updateTimerDisplay() {
+		if (phase !== 'reveal') { timerEl.textContent = '—'; return; }
+		const ms = Math.max(0, revealEndsAt - performance.now());
+		timerEl.textContent = (ms / 1000).toFixed(1) + 's';
+		if (ms <= 0) {
+			if (revealTimer !== null) { clearInterval(revealTimer); revealTimer = null; }
+			startShufflePhase();
+		}
+	}
+
+	function randomTargetQuaternion(): THREE.Quaternion {
+		const minAngle = Math.min(Math.PI / 2 + (round - 1) * 0.25, Math.PI);
+		const maxAngle = Math.min(minAngle + Math.PI, Math.PI * 1.8);
+		const angle = minAngle + Math.random() * (maxAngle - minAngle);
+		const axis = new THREE.Vector3(
+			Math.random() * 2 - 1,
+			Math.random() * 2 - 1,
+			Math.random() * 2 - 1
+		).normalize();
+		return new THREE.Quaternion().setFromAxisAngle(axis, angle);
+	}
+
+	function startShufflePhase() {
+		phase = 'shuffle';
+		controls.enabled = false;
+		setArtifactsVisible(false);
+		timerEl.textContent = '—';
+		setStatus('Shuffling...');
+
+		const to = randomTargetQuaternion();
+		if (reducedMotion) {
+			vaultGroup.quaternion.copy(to);
+			enterChallengePhase();
+			return;
+		}
+		shuffleAnim = {
+			start: performance.now(),
+			duration: 1200,
+			from: vaultGroup.quaternion.clone(),
+			to,
+		};
+	}
+
+	function enterChallengePhase() {
+		phase = 'challenge';
+		controls.enabled = true;
+		shuffleAnim = null;
+
+		target = artifacts[Math.floor(Math.random() * artifacts.length)];
+		// Show decoys, hide the target — player must recall where it was.
+		for (const a of artifacts) a.root.visible = a !== target;
+
+		const colorLabel = COLORS.find((c) => c.key === target.color)!.label;
+		targetNameEl.textContent = `${colorLabel} ${SHAPE_LABEL[target.shape]}`;
+		(targetNameEl as HTMLElement).style.color = '#' + target.hex.toString(16).padStart(6, '0');
+		targetEl.classList.remove('hv-hidden');
+
+		setStatus('Click where the missing artifact was before the rotation.');
+	}
+
+	function enterResultPhase(distance: number) {
+		phase = 'result';
+		controls.enabled = true;
+
+		let gained = 0;
+		let label = 'Miss';
+		if (distance < 0.35) { gained = 3; label = 'Perfect'; }
+		else if (distance < 0.75) { gained = 2; label = 'Good'; }
+		else if (distance < 1.3) { gained = 1; label = 'Close'; }
+
+		score += gained;
+		scoreEl.textContent = String(score);
+
+		if (round > best) {
+			best = round;
+			bestEl.textContent = String(best);
+			saveBest();
+		}
+
+		// Show the target + a marker at its true world position.
+		if (target) {
+			target.root.visible = true;
+			const world = vaultGroup.localToWorld(target.localPos.clone());
+			marker.position.copy(world);
+			markerRing.position.copy(world);
+			markerRing.lookAt(camera.position);
+			marker.visible = true;
+			markerRing.visible = true;
+		}
+
+		nextBtn.disabled = false;
+		restartBtn.disabled = false;
+		setStatus(`${label} — off by ${distance.toFixed(2)}. +${gained}. Press Next for another round.`);
+	}
+
+	// ----- Input -----
+
+	function onCanvasClick(ev: MouseEvent) {
+		if (phase !== 'challenge' || !target) return;
+		const rect = canvas.getBoundingClientRect();
+		ndc.x = ((ev.clientX - rect.left) / rect.width) * 2 - 1;
+		ndc.y = -((ev.clientY - rect.top) / rect.height) * 2 + 1;
+		raycaster.setFromCamera(ndc, camera);
+		const world = vaultGroup.localToWorld(target.localPos.clone());
+		const distance = raycaster.ray.distanceToPoint(world);
+		enterResultPhase(distance);
+	}
+	canvas.addEventListener('click', onCanvasClick);
+
+	startBtn.addEventListener('click', () => {
+		if (phase !== 'idle') return;
+		round = 0;
+		score = 0;
+		scoreEl.textContent = '0';
+		startRevealPhase();
+	});
+
+	nextBtn.addEventListener('click', () => {
+		if (phase !== 'result') return;
+		startRevealPhase();
+	});
+
+	restartBtn.addEventListener('click', () => {
+		if (revealTimer !== null) { clearInterval(revealTimer); revealTimer = null; }
+		enterIdle();
+		// Immediately start a new run.
+		round = 0;
+		score = 0;
+		scoreEl.textContent = '0';
+		startRevealPhase();
+	});
+
+	window.addEventListener('keydown', (e) => {
+		if (e.repeat) return;
+		if (e.code === 'Space') {
+			e.preventDefault();
+			if (phase === 'idle') startBtn.click();
+			else if (phase === 'result') nextBtn.click();
+			return;
+		}
+		if (e.key === 'r' || e.key === 'R') {
+			if (!restartBtn.disabled) restartBtn.click();
+		}
+	});
+
+	// ----- Render loop -----
+
+	function resize() {
+		const w = wrap.clientWidth;
+		const h = wrap.clientHeight;
+		renderer.setSize(w, h, false);
+		camera.aspect = w / h;
+		camera.updateProjectionMatrix();
+	}
+	resize();
+	window.addEventListener('resize', resize);
+	if ('ResizeObserver' in window) {
+		new ResizeObserver(resize).observe(wrap);
+	}
+
+	function animate() {
+		requestAnimationFrame(animate);
+
+		if (shuffleAnim) {
+			const now = performance.now();
+			const t = Math.min(1, (now - shuffleAnim.start) / shuffleAnim.duration);
+			const eased = t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
+			vaultGroup.quaternion.slerpQuaternions(shuffleAnim.from, shuffleAnim.to, eased);
+			if (t >= 1) enterChallengePhase();
+		}
+
+		// Keep the post-guess ring facing the camera, pulse the marker.
+		if (marker.visible) {
+			const p = 0.9 + Math.sin(performance.now() * 0.006) * 0.1;
+			marker.scale.setScalar(p);
+			markerRing.lookAt(camera.position);
+		}
+
+		// Gentle spin on artifacts to show they are 3D.
+		for (const a of artifacts) {
+			if (a.root.visible) a.mesh.rotation.y += 0.01;
+		}
+
+		controls.update();
+		renderer.render(scene, camera);
+	}
+
+	loadBest();
+	enterIdle();
+	animate();
+</script>
+
+<style>
+	#hv-wrapper {
+		margin: 2rem 0;
+		font-family: inherit;
+	}
+
+	#hv-stage-container {
+		background: #0a0a0f;
+		border: 1px solid rgba(0, 240, 255, 0.15);
+		border-radius: 12px 12px 0 0;
+		padding: 1.25rem 1.25rem 1rem;
+	}
+
+	#hv-hud {
+		display: flex;
+		justify-content: space-around;
+		gap: 0.5rem;
+		margin-bottom: 1rem;
+	}
+
+	.hv-hud-item {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		gap: 0.15rem;
+		font-size: 1.1rem;
+		color: rgba(255, 255, 255, 0.9);
+		font-weight: 700;
+	}
+
+	.hv-hud-label {
+		font-size: 0.7rem;
+		font-weight: 600;
+		letter-spacing: 0.12em;
+		text-transform: uppercase;
+		color: rgba(0, 240, 255, 0.75);
+	}
+
+	#hv-canvas-wrap {
+		position: relative;
+		width: 100%;
+		aspect-ratio: 16 / 10;
+		border-radius: 8px;
+		overflow: hidden;
+		background: radial-gradient(circle at center, rgba(0, 240, 255, 0.05), transparent 70%);
+		border: 1px dashed rgba(0, 240, 255, 0.1);
+		cursor: grab;
+	}
+
+	#hv-canvas-wrap:active { cursor: grabbing; }
+
+	#hv-canvas {
+		width: 100%;
+		height: 100%;
+		display: block;
+	}
+
+	.hv-target {
+		position: absolute;
+		top: 12px;
+		left: 50%;
+		transform: translateX(-50%);
+		background: rgba(10, 10, 15, 0.85);
+		border: 1px solid rgba(0, 240, 255, 0.3);
+		border-radius: 999px;
+		padding: 0.4rem 1rem;
+		font-size: 0.85rem;
+		color: rgba(255, 255, 255, 0.85);
+		letter-spacing: 0.06em;
+		backdrop-filter: blur(4px);
+		-webkit-backdrop-filter: blur(4px);
+		pointer-events: none;
+	}
+
+	#hv-target-name {
+		font-weight: 800;
+		letter-spacing: 0.1em;
+	}
+
+	.hv-hidden { display: none; }
+
+	.hv-hint {
+		position: absolute;
+		bottom: 10px;
+		right: 14px;
+		font-size: 0.7rem;
+		color: rgba(255, 255, 255, 0.3);
+		pointer-events: none;
+	}
+
+	#hv-status {
+		text-align: center;
+		margin-top: 0.8rem;
+		font-size: 0.85rem;
+		color: rgba(255, 255, 255, 0.55);
+		min-height: 1.2em;
+	}
+
+	#hv-controls {
+		background: #111118;
+		border: 1px solid rgba(0, 240, 255, 0.15);
+		border-top: none;
+		border-radius: 0 0 12px 12px;
+		padding: 1rem 1.25rem;
+	}
+
+	.hv-buttons {
+		display: flex;
+		gap: 0.75rem;
+	}
+
+	.hv-buttons button {
+		flex: 1;
+		padding: 0.55rem 1rem;
+		background: #0a0a0f;
+		color: rgba(255, 255, 255, 0.7);
+		border: 1px solid rgba(0, 240, 255, 0.15);
+		border-radius: 6px;
+		cursor: pointer;
+		font-family: inherit;
+		font-size: 0.9rem;
+		transition: all 0.2s ease;
+	}
+
+	.hv-buttons button:hover:not(:disabled) {
+		border-color: #00f0ff;
+		color: #00f0ff;
+	}
+
+	.hv-buttons button:disabled {
+		opacity: 0.45;
+		cursor: not-allowed;
+	}
+
+	.hv-controls-hint {
+		display: block;
+		text-align: center;
+		font-size: 0.7rem;
+		color: rgba(255, 255, 255, 0.25);
+		margin-top: 0.6rem;
+	}
+
+	@media (max-width: 500px) {
+		#hv-canvas-wrap { aspect-ratio: 4 / 5; }
+		.hv-target { font-size: 0.75rem; padding: 0.3rem 0.8rem; }
+	}
+</style>

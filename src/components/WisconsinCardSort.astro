@@ -1,0 +1,659 @@
+---
+---
+
+<div id="wc-wrapper">
+	<div id="wc-stage-container">
+		<div id="wc-hud">
+			<div class="wc-hud-item"><span class="wc-hud-label">Trial</span><span id="wc-trial">0</span></div>
+			<div class="wc-hud-item"><span class="wc-hud-label">Streak</span><span id="wc-streak">0</span></div>
+			<div class="wc-hud-item"><span class="wc-hud-label">Categories</span><span id="wc-cats">0 / 6</span></div>
+			<div class="wc-hud-item"><span class="wc-hud-label">Errors</span><span id="wc-errors">0</span></div>
+		</div>
+
+		<div id="wc-keys" role="group" aria-label="Key cards">
+			<!-- four key cards inserted by script -->
+		</div>
+
+		<div id="wc-stage" aria-live="polite">
+			<div id="wc-response-slot">
+				<div id="wc-feedback">PRESS START</div>
+			</div>
+		</div>
+
+		<div id="wc-status" aria-live="polite">Match the card to a key. You won't be told the rule — figure it out from feedback.</div>
+	</div>
+
+	<div id="wc-controls">
+		<div class="wc-buttons">
+			<button id="wc-start" type="button">▶ Start</button>
+			<button id="wc-restart" type="button" disabled>↺ Restart</button>
+		</div>
+		<label class="wc-toggle">
+			<input type="checkbox" id="wc-deck-toggle" />
+			<span>Full 128-card deck</span>
+		</label>
+		<span class="wc-controls-hint">keys: 1-4 sort, space start/restart</span>
+	</div>
+
+	<div id="wc-summary" hidden>
+		<h3>Run complete</h3>
+		<dl id="wc-summary-grid"></dl>
+	</div>
+</div>
+
+<script>
+	type Color = 'red' | 'green' | 'yellow' | 'blue';
+	type Shape = 'triangle' | 'star' | 'cross' | 'circle';
+	type Dim = 'color' | 'shape' | 'number';
+
+	interface Card { color: Color; shape: Shape; number: number; }
+
+	const COLORS: { key: Color; hex: string }[] = [
+		{ key: 'red', hex: '#ff4d4d' },
+		{ key: 'green', hex: '#4dff88' },
+		{ key: 'yellow', hex: '#ffd24d' },
+		{ key: 'blue', hex: '#4da6ff' },
+	];
+	const SHAPES: Shape[] = ['triangle', 'star', 'cross', 'circle'];
+
+	const KEY_CARDS: Card[] = [
+		{ color: 'red', shape: 'triangle', number: 1 },
+		{ color: 'green', shape: 'star', number: 2 },
+		{ color: 'yellow', shape: 'cross', number: 3 },
+		{ color: 'blue', shape: 'circle', number: 4 },
+	];
+
+	const CATEGORY_ORDER: Dim[] = ['color', 'shape', 'number', 'color', 'shape', 'number'];
+	const STREAK_TO_SWITCH = 10;
+	const CATEGORIES_TO_FINISH = 6;
+
+	const wrapper = document.getElementById('wc-wrapper')!;
+	const keysEl = document.getElementById('wc-keys')!;
+	const stageEl = document.getElementById('wc-stage')!;
+	const responseSlot = document.getElementById('wc-response-slot')!;
+	const statusEl = document.getElementById('wc-status')!;
+	const trialEl = document.getElementById('wc-trial')!;
+	const streakEl = document.getElementById('wc-streak')!;
+	const catsEl = document.getElementById('wc-cats')!;
+	const errorsEl = document.getElementById('wc-errors')!;
+	const startBtn = document.getElementById('wc-start') as HTMLButtonElement;
+	const restartBtn = document.getElementById('wc-restart') as HTMLButtonElement;
+	const deckToggle = document.getElementById('wc-deck-toggle') as HTMLInputElement;
+	const summaryEl = document.getElementById('wc-summary')!;
+	const summaryGrid = document.getElementById('wc-summary-grid')!;
+
+	const BEST_CATS_KEY = 'wcst:best-categories';
+	const BEST_PERS_KEY = 'wcst:best-perseverative';
+	const DECK_KEY = 'wcst:full-deck';
+
+	type Phase = 'idle' | 'awaiting' | 'feedback' | 'over';
+	let phase: Phase = 'idle';
+
+	let deck: Card[] = [];
+	let currentCard: Card | null = null;
+	let ruleIdx = 0;
+	let streak = 0;
+	let trial = 0;
+	let errors = 0;
+	let categoriesCompleted = 0;
+	let perseverativeErrors = 0;
+	let nonPerseverativeErrors = 0;
+	let trialsToFirstCategory = 0;
+	let failureToMaintainSet = 0;
+	let conceptualRunTotal = 0;
+	let currentRunLen = 0;
+	// Perseveration bookkeeping: when rule switches, we remember the previous rule
+	// and keep classifying wrong answers as perseverative while they align with
+	// it, until the subject makes 3 consecutive correct under the new rule.
+	let previousRule: Dim | null = null;
+	let correctsUnderNewRule = 0;
+
+	function shapeSvg(shape: Shape, color: string): string {
+		switch (shape) {
+			case 'triangle':
+				return `<svg viewBox="0 0 100 100" aria-hidden="true"><polygon points="50,12 90,88 10,88" fill="${color}"/></svg>`;
+			case 'star':
+				return `<svg viewBox="0 0 100 100" aria-hidden="true"><polygon points="50,8 61,38 94,38 67,57 77,90 50,70 23,90 33,57 6,38 39,38" fill="${color}"/></svg>`;
+			case 'cross':
+				return `<svg viewBox="0 0 100 100" aria-hidden="true"><rect x="40" y="10" width="20" height="80" fill="${color}"/><rect x="10" y="40" width="80" height="20" fill="${color}"/></svg>`;
+			case 'circle':
+				return `<svg viewBox="0 0 100 100" aria-hidden="true"><circle cx="50" cy="50" r="38" fill="${color}"/></svg>`;
+		}
+	}
+
+	function colorHex(c: Color): string {
+		return COLORS.find((x) => x.key === c)!.hex;
+	}
+
+	function cardHtml(card: Card, size: 'key' | 'probe'): string {
+		const hex = colorHex(card.color);
+		const shapes = new Array(card.number).fill(0).map(() => shapeSvg(card.shape, hex)).join('');
+		const cls = size === 'key' ? 'wc-card wc-card-key' : 'wc-card wc-card-probe';
+		return `<div class="${cls}"><div class="wc-card-inner" data-n="${card.number}">${shapes}</div></div>`;
+	}
+
+	function renderKeyCards() {
+		keysEl.innerHTML = KEY_CARDS.map((c, i) => {
+			return `<button class="wc-key" type="button" data-slot="${i}" aria-label="Key card ${i + 1}: ${c.number} ${c.color} ${c.shape}">`
+				+ cardHtml(c, 'key')
+				+ `<span class="wc-key-badge">${i + 1}</span>`
+				+ `</button>`;
+		}).join('');
+		Array.from(keysEl.querySelectorAll<HTMLButtonElement>('.wc-key')).forEach((btn) => {
+			btn.addEventListener('click', () => {
+				const slot = Number(btn.dataset.slot);
+				handleChoice(slot);
+			});
+		});
+	}
+
+	function buildDeck(full: boolean): Card[] {
+		const d: Card[] = [];
+		for (const c of COLORS) {
+			for (const s of SHAPES) {
+				for (let n = 1; n <= 4; n++) {
+					d.push({ color: c.key, shape: s, number: n });
+				}
+			}
+		}
+		const deck = full ? d.concat(d.map((c) => ({ ...c }))) : d;
+		for (let i = deck.length - 1; i > 0; i--) {
+			const j = Math.floor(Math.random() * (i + 1));
+			[deck[i], deck[j]] = [deck[j], deck[i]];
+		}
+		return deck;
+	}
+
+	function matchingSlot(card: Card, dim: Dim): number {
+		return KEY_CARDS.findIndex((k) => {
+			if (dim === 'color') return k.color === card.color;
+			if (dim === 'shape') return k.shape === card.shape;
+			return k.number === card.number;
+		});
+	}
+
+	function setPhase(p: Phase) {
+		phase = p;
+		wrapper.dataset.phase = p;
+	}
+
+	function setStatus(t: string) { statusEl.textContent = t; }
+
+	function updateHud() {
+		trialEl.textContent = String(trial);
+		streakEl.textContent = String(streak);
+		catsEl.textContent = `${categoriesCompleted} / ${CATEGORIES_TO_FINISH}`;
+		errorsEl.textContent = String(errors);
+	}
+
+	function dealNext() {
+		if (categoriesCompleted >= CATEGORIES_TO_FINISH || deck.length === 0) {
+			endRun();
+			return;
+		}
+		currentCard = deck.pop()!;
+		responseSlot.innerHTML = cardHtml(currentCard, 'probe') + `<div id="wc-feedback"></div>`;
+		setPhase('awaiting');
+	}
+
+	function flashFeedback(text: string, cls: 'ok' | 'bad') {
+		const fb = responseSlot.querySelector('#wc-feedback') as HTMLElement | null;
+		if (!fb) return;
+		fb.textContent = text;
+		fb.className = `wc-fb wc-fb-${cls}`;
+		fb.classList.add('wc-fb-show');
+		setTimeout(() => fb.classList.remove('wc-fb-show'), 280);
+	}
+
+	function highlightKey(slot: number, ok: boolean) {
+		const btn = keysEl.querySelector(`.wc-key[data-slot="${slot}"]`) as HTMLButtonElement | null;
+		if (!btn) return;
+		btn.classList.add(ok ? 'wc-key-ok' : 'wc-key-bad');
+		setTimeout(() => btn.classList.remove('wc-key-ok', 'wc-key-bad'), 420);
+	}
+
+	function handleChoice(slot: number) {
+		if (phase !== 'awaiting' || !currentCard) return;
+
+		const currentRule = CATEGORY_ORDER[ruleIdx];
+		const correctSlot = matchingSlot(currentCard, currentRule);
+		const chosenIsCorrect = slot === correctSlot;
+
+		trial += 1;
+
+		// Conceptual-level responses: runs of 3+ consecutive correct.
+		if (chosenIsCorrect) {
+			currentRunLen += 1;
+			if (currentRunLen >= 3) conceptualRunTotal += 1;
+			if (currentRunLen === 3) conceptualRunTotal += 2; // retroactively count the 2 that started the run
+		} else {
+			currentRunLen = 0;
+		}
+
+		if (chosenIsCorrect) {
+			streak += 1;
+			if (previousRule !== null) correctsUnderNewRule += 1;
+			if (correctsUnderNewRule >= 3) previousRule = null; // perseveration window closed
+			highlightKey(slot, true);
+			flashFeedback('CORRECT', 'ok');
+			setStatus('Correct.');
+
+			if (streak >= STREAK_TO_SWITCH) {
+				// Switch rule silently.
+				categoriesCompleted += 1;
+				if (trialsToFirstCategory === 0) trialsToFirstCategory = trial;
+				previousRule = CATEGORY_ORDER[ruleIdx];
+				correctsUnderNewRule = 0;
+				ruleIdx = Math.min(ruleIdx + 1, CATEGORY_ORDER.length - 1);
+				streak = 0;
+			}
+		} else {
+			errors += 1;
+			// Classify perseveration: was the chosen slot correct under the
+			// previous rule (Heaton/Milner convention)? Fall back to a
+			// pre-first-category mode where perseveration is "stuck matching
+			// on a dimension other than color" for simplicity.
+			let wasPerseverative = false;
+			if (previousRule) {
+				wasPerseverative = slot === matchingSlot(currentCard, previousRule);
+			}
+			if (wasPerseverative) perseverativeErrors += 1;
+			else nonPerseverativeErrors += 1;
+
+			// Failure to maintain set: break a run of 5+ before reaching 10.
+			if (streak >= 5 && streak < STREAK_TO_SWITCH) {
+				failureToMaintainSet += 1;
+			}
+			streak = 0;
+			highlightKey(slot, false);
+			flashFeedback('WRONG', 'bad');
+			setStatus('Wrong. Try a different rule.');
+		}
+
+		updateHud();
+		setPhase('feedback');
+		setTimeout(() => dealNext(), 520);
+	}
+
+	function loadPrefs() {
+		try {
+			const full = localStorage.getItem(DECK_KEY) === '1';
+			deckToggle.checked = full;
+		} catch (_) {}
+	}
+
+	function savePref(k: string, v: string) {
+		try { localStorage.setItem(k, v); } catch (_) {}
+	}
+
+	function startRun() {
+		deck = buildDeck(deckToggle.checked);
+		currentCard = null;
+		ruleIdx = 0;
+		streak = 0;
+		trial = 0;
+		errors = 0;
+		categoriesCompleted = 0;
+		perseverativeErrors = 0;
+		nonPerseverativeErrors = 0;
+		trialsToFirstCategory = 0;
+		failureToMaintainSet = 0;
+		conceptualRunTotal = 0;
+		currentRunLen = 0;
+		previousRule = null;
+		correctsUnderNewRule = 0;
+		summaryEl.hidden = true;
+		updateHud();
+		startBtn.disabled = true;
+		restartBtn.disabled = false;
+		setStatus('Match the card to a key. Feedback only — the rule is hidden.');
+		dealNext();
+	}
+
+	function endRun() {
+		setPhase('over');
+		currentCard = null;
+		responseSlot.innerHTML = `<div id="wc-feedback" class="wc-fb wc-fb-done">DONE</div>`;
+
+		// Persist bests.
+		try {
+			const prevBestCats = parseInt(localStorage.getItem(BEST_CATS_KEY) || '0', 10);
+			if (categoriesCompleted > prevBestCats) savePref(BEST_CATS_KEY, String(categoriesCompleted));
+			if (categoriesCompleted >= CATEGORIES_TO_FINISH) {
+				const prevBestPers = parseInt(localStorage.getItem(BEST_PERS_KEY) || String(Number.MAX_SAFE_INTEGER), 10);
+				if (perseverativeErrors < prevBestPers) savePref(BEST_PERS_KEY, String(perseverativeErrors));
+			}
+		} catch (_) {}
+
+		const conceptualPct = trial > 0 ? Math.round((conceptualRunTotal / trial) * 100) : 0;
+		const rows: [string, string][] = [
+			['Categories completed', `${categoriesCompleted} / ${CATEGORIES_TO_FINISH}`],
+			['Total trials', String(trial)],
+			['Total errors', String(errors)],
+			['Perseverative errors', String(perseverativeErrors)],
+			['Non-perseverative errors', String(nonPerseverativeErrors)],
+			['Trials to first category', trialsToFirstCategory ? String(trialsToFirstCategory) : '—'],
+			['Failure to maintain set', String(failureToMaintainSet)],
+			['Conceptual-level responses', `${conceptualPct}%`],
+		];
+		summaryGrid.innerHTML = rows.map(([k, v]) => `<div class="wc-sr"><dt>${k}</dt><dd>${v}</dd></div>`).join('');
+		summaryEl.hidden = false;
+		setStatus(categoriesCompleted >= CATEGORIES_TO_FINISH ? 'All six categories completed.' : 'Deck exhausted.');
+		startBtn.disabled = true;
+		restartBtn.disabled = false;
+	}
+
+	renderKeyCards();
+	loadPrefs();
+	updateHud();
+
+	startBtn.addEventListener('click', () => {
+		if (phase === 'idle' || phase === 'over') startRun();
+	});
+	restartBtn.addEventListener('click', () => { startRun(); });
+	deckToggle.addEventListener('change', () => { savePref(DECK_KEY, deckToggle.checked ? '1' : '0'); });
+
+	window.addEventListener('keydown', (e) => {
+		if (e.repeat) return;
+		if (e.code === 'Space') {
+			e.preventDefault();
+			if (phase === 'idle' || phase === 'over') startRun();
+			return;
+		}
+		const map: Record<string, number> = { '1': 0, '2': 1, '3': 2, '4': 3 };
+		const slot = map[e.key];
+		if (slot !== undefined) handleChoice(slot);
+	});
+</script>
+
+<style>
+	#wc-wrapper {
+		margin: 2rem 0;
+		font-family: inherit;
+	}
+
+	#wc-stage-container {
+		background: #0a0a0f;
+		border: 1px solid rgba(0, 240, 255, 0.15);
+		border-radius: 12px 12px 0 0;
+		padding: 1.25rem 1.25rem 1rem;
+	}
+
+	#wc-hud {
+		display: flex;
+		justify-content: space-around;
+		gap: 0.5rem;
+		margin-bottom: 1rem;
+		flex-wrap: wrap;
+	}
+
+	.wc-hud-item {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		gap: 0.15rem;
+		font-size: 1.05rem;
+		color: rgba(255, 255, 255, 0.9);
+		font-weight: 700;
+		min-width: 70px;
+	}
+
+	.wc-hud-label {
+		font-size: 0.68rem;
+		font-weight: 600;
+		letter-spacing: 0.12em;
+		text-transform: uppercase;
+		color: rgba(0, 240, 255, 0.75);
+	}
+
+	#wc-keys {
+		display: grid;
+		grid-template-columns: repeat(4, 1fr);
+		gap: 0.6rem;
+		margin-bottom: 1rem;
+	}
+
+	.wc-key {
+		position: relative;
+		background: #111118;
+		border: 1px solid rgba(255, 255, 255, 0.08);
+		border-radius: 8px;
+		padding: 0.5rem;
+		cursor: pointer;
+		font-family: inherit;
+		color: rgba(255, 255, 255, 0.7);
+		transition: transform 0.1s ease, border-color 0.2s ease, box-shadow 0.2s ease;
+	}
+
+	.wc-key:hover {
+		border-color: #00f0ff;
+		box-shadow: 0 0 14px rgba(0, 240, 255, 0.25);
+	}
+
+	.wc-key:active {
+		transform: scale(0.97);
+	}
+
+	.wc-key-ok {
+		border-color: #00f0ff !important;
+		box-shadow: 0 0 18px rgba(0, 240, 255, 0.6) !important;
+	}
+
+	.wc-key-bad {
+		border-color: #ff4d4d !important;
+		box-shadow: 0 0 18px rgba(255, 77, 77, 0.6) !important;
+	}
+
+	.wc-key-badge {
+		position: absolute;
+		top: 4px;
+		right: 6px;
+		font-size: 0.65rem;
+		padding: 0.05rem 0.35rem;
+		border: 1px solid rgba(255, 255, 255, 0.15);
+		border-radius: 4px;
+		color: rgba(255, 255, 255, 0.55);
+		background: rgba(0, 0, 0, 0.4);
+	}
+
+	.wc-card {
+		background: #fafbfc;
+		border-radius: 6px;
+		padding: 0.4rem;
+		aspect-ratio: 2 / 3;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+	}
+
+	.wc-card-probe {
+		width: 120px;
+	}
+
+	.wc-card-inner {
+		display: grid;
+		gap: 4px;
+		width: 100%;
+		height: 100%;
+		align-content: center;
+		justify-items: center;
+	}
+
+	.wc-card-inner[data-n="1"] { grid-template-columns: 1fr; grid-template-rows: 1fr; }
+	.wc-card-inner[data-n="2"] { grid-template-columns: 1fr; grid-template-rows: 1fr 1fr; }
+	.wc-card-inner[data-n="3"] { grid-template-columns: 1fr; grid-template-rows: repeat(3, 1fr); }
+	.wc-card-inner[data-n="4"] { grid-template-columns: 1fr 1fr; grid-template-rows: 1fr 1fr; }
+
+	.wc-card-inner svg {
+		width: 100%;
+		height: 100%;
+		max-width: 34px;
+		max-height: 34px;
+	}
+
+	#wc-stage {
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		min-height: 220px;
+		border-radius: 8px;
+		background: radial-gradient(circle at center, rgba(0, 240, 255, 0.05), transparent 70%);
+		border: 1px dashed rgba(0, 240, 255, 0.1);
+		padding: 1rem;
+	}
+
+	#wc-response-slot {
+		position: relative;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+	}
+
+	.wc-fb {
+		position: absolute;
+		top: -28px;
+		left: 50%;
+		transform: translateX(-50%);
+		font-size: 0.85rem;
+		font-weight: 800;
+		letter-spacing: 0.18em;
+		padding: 0.15rem 0.5rem;
+		border-radius: 4px;
+		opacity: 0;
+		transition: opacity 0.2s ease, transform 0.2s ease;
+	}
+
+	.wc-fb-show { opacity: 1; transform: translateX(-50%) translateY(-4px); }
+	.wc-fb-ok { color: #00f0ff; background: rgba(0, 240, 255, 0.1); }
+	.wc-fb-bad { color: #ff4d4d; background: rgba(255, 77, 77, 0.1); }
+	.wc-fb-done { position: static; transform: none; opacity: 1; color: rgba(255,255,255,0.6); background: transparent; font-size: 1.3rem; }
+
+	#wc-feedback {
+		color: rgba(255, 255, 255, 0.4);
+		font-weight: 700;
+		letter-spacing: 0.2em;
+		font-size: 1rem;
+	}
+
+	#wc-status {
+		text-align: center;
+		margin-top: 0.8rem;
+		font-size: 0.85rem;
+		color: rgba(255, 255, 255, 0.55);
+		min-height: 1.2em;
+	}
+
+	#wc-controls {
+		background: #111118;
+		border: 1px solid rgba(0, 240, 255, 0.15);
+		border-top: none;
+		border-radius: 0 0 12px 12px;
+		padding: 1rem 1.25rem;
+	}
+
+	.wc-buttons {
+		display: flex;
+		gap: 0.75rem;
+	}
+
+	.wc-buttons button {
+		flex: 1;
+		padding: 0.55rem 1rem;
+		background: #0a0a0f;
+		color: rgba(255, 255, 255, 0.7);
+		border: 1px solid rgba(0, 240, 255, 0.15);
+		border-radius: 6px;
+		cursor: pointer;
+		font-family: inherit;
+		font-size: 0.9rem;
+		transition: all 0.2s ease;
+	}
+
+	.wc-buttons button:hover:not(:disabled) {
+		border-color: #00f0ff;
+		color: #00f0ff;
+	}
+
+	.wc-buttons button:disabled {
+		opacity: 0.45;
+		cursor: not-allowed;
+	}
+
+	.wc-toggle {
+		display: flex;
+		align-items: center;
+		gap: 0.5rem;
+		margin-top: 0.8rem;
+		font-size: 0.8rem;
+		color: rgba(255, 255, 255, 0.55);
+		cursor: pointer;
+		user-select: none;
+	}
+
+	.wc-toggle input {
+		accent-color: #00f0ff;
+	}
+
+	.wc-controls-hint {
+		display: block;
+		text-align: center;
+		font-size: 0.7rem;
+		color: rgba(255, 255, 255, 0.25);
+		margin-top: 0.6rem;
+	}
+
+	#wc-summary {
+		margin-top: 1rem;
+		background: #0a0a0f;
+		border: 1px solid rgba(0, 240, 255, 0.15);
+		border-radius: 12px;
+		padding: 1.25rem;
+	}
+
+	#wc-summary h3 {
+		margin: 0 0 0.8rem;
+		font-size: 0.95rem;
+		letter-spacing: 0.14em;
+		text-transform: uppercase;
+		color: rgba(0, 240, 255, 0.85);
+	}
+
+	#wc-summary-grid {
+		display: grid;
+		grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+		gap: 0.6rem 1rem;
+		margin: 0;
+	}
+
+	.wc-sr {
+		display: flex;
+		flex-direction: column;
+		gap: 0.15rem;
+		padding: 0.5rem 0.6rem;
+		background: #111118;
+		border-radius: 6px;
+		border: 1px solid rgba(255, 255, 255, 0.05);
+	}
+
+	.wc-sr dt {
+		font-size: 0.65rem;
+		letter-spacing: 0.12em;
+		text-transform: uppercase;
+		color: rgba(0, 240, 255, 0.7);
+	}
+
+	.wc-sr dd {
+		margin: 0;
+		font-size: 1.05rem;
+		font-weight: 700;
+		color: rgba(255, 255, 255, 0.9);
+	}
+
+	@media (max-width: 560px) {
+		#wc-keys { gap: 0.35rem; }
+		.wc-key { padding: 0.3rem; }
+		.wc-card-probe { width: 90px; }
+		.wc-card-inner svg { max-width: 24px; max-height: 24px; }
+		.wc-hud-item { font-size: 0.95rem; min-width: 60px; }
+	}
+</style>

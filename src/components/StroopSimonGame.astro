@@ -1,0 +1,488 @@
+---
+---
+
+<div id="ss-wrapper">
+	<div id="ss-stage-container">
+		<div id="ss-hud">
+			<div class="ss-hud-item"><span class="ss-hud-label">Round</span><span id="ss-round">0</span></div>
+			<div class="ss-hud-item"><span class="ss-hud-label">Length</span><span id="ss-length">0</span></div>
+			<div class="ss-hud-item"><span class="ss-hud-label">Best</span><span id="ss-best">0</span></div>
+		</div>
+		<div id="ss-stage">
+			<span id="ss-word">READY?</span>
+		</div>
+		<div id="ss-status" aria-live="polite">Press Start to begin. Remember the ink color, not the word.</div>
+	</div>
+	<div id="ss-pads">
+		<button class="ss-pad" data-color="red" type="button" style="--c:#ff4d4d">
+			<span class="ss-pad-swatch"></span>
+			<span class="ss-pad-label">Red <kbd>1</kbd></span>
+		</button>
+		<button class="ss-pad" data-color="blue" type="button" style="--c:#4da6ff">
+			<span class="ss-pad-swatch"></span>
+			<span class="ss-pad-label">Blue <kbd>2</kbd></span>
+		</button>
+		<button class="ss-pad" data-color="green" type="button" style="--c:#4dff88">
+			<span class="ss-pad-swatch"></span>
+			<span class="ss-pad-label">Green <kbd>3</kbd></span>
+		</button>
+		<button class="ss-pad" data-color="yellow" type="button" style="--c:#ffd24d">
+			<span class="ss-pad-swatch"></span>
+			<span class="ss-pad-label">Yellow <kbd>4</kbd></span>
+		</button>
+	</div>
+	<div id="ss-controls">
+		<div class="ss-buttons">
+			<button id="ss-start" type="button">▶ Start</button>
+			<button id="ss-restart" type="button" disabled>↺ Restart</button>
+		</div>
+		<label class="ss-toggle">
+			<input type="checkbox" id="ss-cb-toggle" />
+			<span>Colorblind glyphs</span>
+		</label>
+		<span class="ss-controls-hint">keys: 1-4 pads, space start/restart</span>
+	</div>
+</div>
+
+<script>
+	type Color = 'red' | 'blue' | 'green' | 'yellow';
+
+	const COLORS: { key: Color; hex: string; word: string; glyph: string }[] = [
+		{ key: 'red', hex: '#ff4d4d', word: 'RED', glyph: 'R' },
+		{ key: 'blue', hex: '#4da6ff', word: 'BLUE', glyph: 'B' },
+		{ key: 'green', hex: '#4dff88', word: 'GREEN', glyph: 'G' },
+		{ key: 'yellow', hex: '#ffd24d', word: 'YELLOW', glyph: 'Y' },
+	];
+
+	interface Cue { word: string; ink: Color; hex: string; }
+
+	const stage = document.getElementById('ss-stage')!;
+	const wordEl = document.getElementById('ss-word')!;
+	const statusEl = document.getElementById('ss-status')!;
+	const roundEl = document.getElementById('ss-round')!;
+	const lengthEl = document.getElementById('ss-length')!;
+	const bestEl = document.getElementById('ss-best')!;
+	const startBtn = document.getElementById('ss-start') as HTMLButtonElement;
+	const restartBtn = document.getElementById('ss-restart') as HTMLButtonElement;
+	const cbToggle = document.getElementById('ss-cb-toggle') as HTMLInputElement;
+	const pads = Array.from(document.querySelectorAll<HTMLButtonElement>('.ss-pad'));
+
+	const BEST_KEY = 'stroop-simon:best';
+	const CB_KEY = 'stroop-simon:cb';
+
+	type Phase = 'idle' | 'showing' | 'input' | 'over';
+
+	let phase: Phase = 'idle';
+	let sequence: Cue[] = [];
+	let round = 0;
+	let inputIndex = 0;
+	let best = 0;
+
+	function loadPrefs() {
+		try {
+			const b = parseInt(localStorage.getItem(BEST_KEY) || '0', 10);
+			if (!Number.isNaN(b)) best = b;
+			bestEl.textContent = String(best);
+			const cb = localStorage.getItem(CB_KEY) === '1';
+			cbToggle.checked = cb;
+			document.getElementById('ss-wrapper')!.classList.toggle('ss-cb', cb);
+		} catch (_) {}
+	}
+
+	function saveBest(value: number) {
+		try { localStorage.setItem(BEST_KEY, String(value)); } catch (_) {}
+	}
+
+	function setStatus(text: string) { statusEl.textContent = text; }
+
+	function setPadsDisabled(disabled: boolean) {
+		pads.forEach((p) => { p.disabled = disabled; });
+	}
+
+	function pickCue(): Cue {
+		const ink = COLORS[Math.floor(Math.random() * COLORS.length)];
+		const mismatch = Math.random() < 0.7;
+		let wordColor = ink;
+		if (mismatch) {
+			const others = COLORS.filter((c) => c.key !== ink.key);
+			wordColor = others[Math.floor(Math.random() * others.length)];
+		}
+		return { word: wordColor.word, ink: ink.key, hex: ink.hex };
+	}
+
+	function sleep(ms: number) {
+		return new Promise<void>((resolve) => setTimeout(resolve, ms));
+	}
+
+	function flashPad(color: Color) {
+		const pad = pads.find((p) => p.dataset.color === color);
+		if (!pad) return;
+		pad.classList.add('ss-pad-active');
+		setTimeout(() => pad.classList.remove('ss-pad-active'), 220);
+	}
+
+	async function playSequence() {
+		phase = 'showing';
+		setPadsDisabled(true);
+		setStatus('Watch the ink color.');
+		wordEl.textContent = '';
+		await sleep(400);
+		const showMs = Math.max(320, 900 - round * 40);
+		const gapMs = Math.max(160, 260 - round * 8);
+		for (let i = 0; i < sequence.length; i++) {
+			const cue = sequence[i];
+			wordEl.textContent = cue.word;
+			wordEl.style.color = cue.hex;
+			wordEl.style.textShadow = `0 0 24px ${cue.hex}88`;
+			stage.classList.add('ss-pulse');
+			await sleep(showMs);
+			stage.classList.remove('ss-pulse');
+			wordEl.textContent = '';
+			wordEl.style.textShadow = 'none';
+			await sleep(gapMs);
+		}
+		wordEl.textContent = 'YOUR TURN';
+		wordEl.style.color = '';
+		wordEl.style.textShadow = '';
+		phase = 'input';
+		inputIndex = 0;
+		setPadsDisabled(false);
+		setStatus(`Repeat the ${sequence.length} ink colors in order.`);
+	}
+
+	function nextRound() {
+		round += 1;
+		sequence.push(pickCue());
+		roundEl.textContent = String(round);
+		lengthEl.textContent = String(sequence.length);
+		playSequence();
+	}
+
+	function startGame() {
+		sequence = [];
+		round = 0;
+		inputIndex = 0;
+		startBtn.disabled = true;
+		restartBtn.disabled = false;
+		// Start with 3 cues for a real challenge out of the gate.
+		for (let i = 0; i < 2; i++) sequence.push(pickCue());
+		nextRound();
+	}
+
+	function restartGame() {
+		startBtn.disabled = true;
+		restartBtn.disabled = false;
+		sequence = [];
+		round = 0;
+		inputIndex = 0;
+		roundEl.textContent = '0';
+		lengthEl.textContent = '0';
+		for (let i = 0; i < 2; i++) sequence.push(pickCue());
+		nextRound();
+	}
+
+	function gameOver(correctSoFar: number) {
+		phase = 'over';
+		setPadsDisabled(true);
+		const finalScore = round - 1 + (correctSoFar === sequence.length ? 1 : 0);
+		const reached = Math.max(0, round);
+		if (reached > best) {
+			best = reached;
+			bestEl.textContent = String(best);
+			saveBest(best);
+			setStatus(`Wrong ink. New best: round ${reached}!`);
+		} else {
+			setStatus(`Wrong ink. Reached round ${reached}. Best: ${best}.`);
+		}
+		wordEl.textContent = 'GAME OVER';
+		wordEl.style.color = '#ff4d4d';
+		wordEl.style.textShadow = '0 0 18px #ff4d4d66';
+		stage.classList.add('ss-shake');
+		setTimeout(() => stage.classList.remove('ss-shake'), 500);
+		startBtn.disabled = true;
+		restartBtn.disabled = false;
+	}
+
+	function handlePad(color: Color) {
+		if (phase !== 'input') return;
+		const expected = sequence[inputIndex].ink;
+		flashPad(color);
+		if (color !== expected) {
+			gameOver(inputIndex);
+			return;
+		}
+		inputIndex += 1;
+		if (inputIndex >= sequence.length) {
+			setStatus('Correct. Next round...');
+			phase = 'showing';
+			setPadsDisabled(true);
+			setTimeout(() => nextRound(), 650);
+		}
+	}
+
+	pads.forEach((pad) => {
+		pad.addEventListener('click', () => handlePad(pad.dataset.color as Color));
+	});
+
+	startBtn.addEventListener('click', () => {
+		if (phase === 'idle') startGame();
+	});
+
+	restartBtn.addEventListener('click', () => {
+		restartGame();
+	});
+
+	cbToggle.addEventListener('change', () => {
+		const on = cbToggle.checked;
+		document.getElementById('ss-wrapper')!.classList.toggle('ss-cb', on);
+		try { localStorage.setItem(CB_KEY, on ? '1' : '0'); } catch (_) {}
+	});
+
+	window.addEventListener('keydown', (e) => {
+		if (e.repeat) return;
+		if (e.code === 'Space') {
+			e.preventDefault();
+			if (phase === 'idle') startGame();
+			else if (phase === 'over') restartGame();
+			return;
+		}
+		const map: Record<string, Color> = { '1': 'red', '2': 'blue', '3': 'green', '4': 'yellow' };
+		const c = map[e.key];
+		if (c) handlePad(c);
+	});
+
+	// Populate colorblind glyphs
+	pads.forEach((pad) => {
+		const key = pad.dataset.color as Color;
+		const info = COLORS.find((c) => c.key === key)!;
+		const swatch = pad.querySelector('.ss-pad-swatch') as HTMLElement;
+		swatch.dataset.glyph = info.glyph;
+	});
+
+	loadPrefs();
+	setPadsDisabled(true);
+</script>
+
+<style>
+	#ss-wrapper {
+		margin: 2rem 0;
+		font-family: inherit;
+	}
+
+	#ss-stage-container {
+		background: #0a0a0f;
+		border: 1px solid rgba(0, 240, 255, 0.15);
+		border-radius: 12px 12px 0 0;
+		padding: 1.25rem 1.25rem 1rem;
+	}
+
+	#ss-hud {
+		display: flex;
+		justify-content: space-around;
+		gap: 0.5rem;
+		margin-bottom: 1rem;
+	}
+
+	.ss-hud-item {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		gap: 0.15rem;
+		font-size: 1.1rem;
+		color: rgba(255, 255, 255, 0.9);
+		font-weight: 700;
+	}
+
+	.ss-hud-label {
+		font-size: 0.7rem;
+		font-weight: 600;
+		letter-spacing: 0.12em;
+		text-transform: uppercase;
+		color: rgba(0, 240, 255, 0.75);
+	}
+
+	#ss-stage {
+		height: 160px;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		border-radius: 8px;
+		background: radial-gradient(circle at center, rgba(0, 240, 255, 0.05), transparent 70%);
+		border: 1px dashed rgba(0, 240, 255, 0.1);
+		transition: transform 0.2s ease;
+	}
+
+	#ss-word {
+		font-size: 3.2rem;
+		font-weight: 800;
+		letter-spacing: 0.08em;
+		color: rgba(255, 255, 255, 0.85);
+		transition: color 0.15s ease, text-shadow 0.15s ease;
+		user-select: none;
+	}
+
+	#ss-stage.ss-pulse {
+		transform: scale(1.03);
+	}
+
+	#ss-stage.ss-shake {
+		animation: ss-shake 0.4s ease;
+	}
+
+	@keyframes ss-shake {
+		0%, 100% { transform: translateX(0); }
+		25% { transform: translateX(-6px); }
+		50% { transform: translateX(6px); }
+		75% { transform: translateX(-3px); }
+	}
+
+	#ss-status {
+		text-align: center;
+		margin-top: 0.8rem;
+		font-size: 0.85rem;
+		color: rgba(255, 255, 255, 0.55);
+		min-height: 1.2em;
+	}
+
+	#ss-pads {
+		display: grid;
+		grid-template-columns: repeat(4, 1fr);
+		gap: 0.6rem;
+		padding: 1rem;
+		background: #111118;
+		border-left: 1px solid rgba(0, 240, 255, 0.15);
+		border-right: 1px solid rgba(0, 240, 255, 0.15);
+	}
+
+	.ss-pad {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		gap: 0.5rem;
+		background: #0a0a0f;
+		border: 1px solid rgba(255, 255, 255, 0.08);
+		border-radius: 8px;
+		padding: 0.75rem 0.4rem;
+		cursor: pointer;
+		font-family: inherit;
+		color: rgba(255, 255, 255, 0.7);
+		transition: transform 0.1s ease, border-color 0.2s ease, box-shadow 0.2s ease;
+	}
+
+	.ss-pad:hover:not(:disabled) {
+		border-color: var(--c);
+		color: var(--c);
+	}
+
+	.ss-pad:active:not(:disabled),
+	.ss-pad.ss-pad-active {
+		transform: scale(0.96);
+		border-color: var(--c);
+		box-shadow: 0 0 18px color-mix(in srgb, var(--c) 60%, transparent);
+	}
+
+	.ss-pad:disabled {
+		opacity: 0.5;
+		cursor: not-allowed;
+	}
+
+	.ss-pad-swatch {
+		width: 100%;
+		aspect-ratio: 2 / 1;
+		background: var(--c);
+		border-radius: 6px;
+		box-shadow: 0 0 12px color-mix(in srgb, var(--c) 35%, transparent);
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		color: rgba(0, 0, 0, 0.5);
+		font-weight: 800;
+		font-size: 1.2rem;
+	}
+
+	#ss-wrapper.ss-cb .ss-pad-swatch::after {
+		content: attr(data-glyph);
+	}
+
+	.ss-pad-label {
+		font-size: 0.8rem;
+		display: flex;
+		align-items: center;
+		gap: 0.3rem;
+	}
+
+	.ss-pad-label kbd {
+		font-size: 0.65rem;
+		padding: 0.05rem 0.35rem;
+		border: 1px solid rgba(255, 255, 255, 0.15);
+		border-radius: 4px;
+		color: rgba(255, 255, 255, 0.5);
+		background: rgba(255, 255, 255, 0.03);
+		font-family: inherit;
+	}
+
+	#ss-controls {
+		background: #111118;
+		border: 1px solid rgba(0, 240, 255, 0.15);
+		border-top: none;
+		border-radius: 0 0 12px 12px;
+		padding: 1rem 1.25rem;
+	}
+
+	.ss-buttons {
+		display: flex;
+		gap: 0.75rem;
+	}
+
+	.ss-buttons button {
+		flex: 1;
+		padding: 0.55rem 1rem;
+		background: #0a0a0f;
+		color: rgba(255, 255, 255, 0.7);
+		border: 1px solid rgba(0, 240, 255, 0.15);
+		border-radius: 6px;
+		cursor: pointer;
+		font-family: inherit;
+		font-size: 0.9rem;
+		transition: all 0.2s ease;
+	}
+
+	.ss-buttons button:hover:not(:disabled) {
+		border-color: #00f0ff;
+		color: #00f0ff;
+	}
+
+	.ss-buttons button:disabled {
+		opacity: 0.45;
+		cursor: not-allowed;
+	}
+
+	.ss-toggle {
+		display: flex;
+		align-items: center;
+		gap: 0.5rem;
+		margin-top: 0.8rem;
+		font-size: 0.8rem;
+		color: rgba(255, 255, 255, 0.55);
+		cursor: pointer;
+		user-select: none;
+	}
+
+	.ss-toggle input {
+		accent-color: #00f0ff;
+	}
+
+	.ss-controls-hint {
+		display: block;
+		text-align: center;
+		font-size: 0.7rem;
+		color: rgba(255, 255, 255, 0.25);
+		margin-top: 0.6rem;
+	}
+
+	@media (max-width: 500px) {
+		#ss-word { font-size: 2.2rem; }
+		#ss-stage { height: 130px; }
+		.ss-pad-label kbd { display: none; }
+	}
+</style>

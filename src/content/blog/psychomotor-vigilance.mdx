@@ -1,0 +1,52 @@
+---
+title: "Psychomotor Vigilance Task"
+description: "The fatigue test NASA uses on astronauts. A counter appears at a random moment; you stop it as fast as you can. Lapses — not mean speed — are the real signal."
+pubDate: "2026-04-16"
+category: project
+---
+
+import PsychomotorVigilance from '../../components/PsychomotorVigilance.astro';
+
+The Psychomotor Vigilance Task (PVT) was designed in the 1980s by David Dinges and John Powell as a ten-minute test of sustained attention under fatigue. The rules are almost insultingly simple: you stare at a spot, and at unpredictable intervals a millisecond counter appears and starts climbing. You stop it as fast as you can. That's the whole game. The reason the test became the gold standard for sleep-deprivation research — and why NASA carries it on the International Space Station to monitor astronaut alertness — is that it is almost impossible to game. There's nothing to learn, no strategy, no ceiling effect. When attention slips, the clock just keeps ticking.
+
+## How to play
+
+1. Press **Start**. Wait. A breathing dot tells you the trial has armed but the stimulus hasn't appeared yet.
+2. At a random moment (between 2 and 10 seconds), a counter replaces the dot and starts counting up in milliseconds.
+3. Stop it as fast as you can: tap the **Respond** pad, press <kbd>Space</kbd>, or click anywhere inside the stage.
+4. Responding *before* the counter shows up is a **false start** and doesn't contribute to your reaction-time distribution — but it is recorded.
+5. A response that takes longer than 500 ms is flagged as a **lapse** — a micro-slip of attention that is the task's real target measure.
+
+## Play
+
+<PsychomotorVigilance />
+
+## What the numbers actually mean
+
+The PVT exposes four different views of the same underlying attention:
+
+- **Mean RT** is the average reaction time on valid trials. Well-rested adults typically land around 250–300 ms; mean RT alone is remarkably resistant to sleep loss.
+- **Fastest 10%** captures your *best* physiological speed — the motor-plus-vision floor. It barely moves with fatigue and is roughly the lower bound of what your nervous system can do on this task.
+- **Slowest 10%** is where fatigue hides. As sleep pressure builds, the upper tail of the RT distribution grows long and heavy while the mean drifts only modestly.
+- **Lapses (RT > 500 ms)** are the canonical PVT metric. Dinges and colleagues showed that lapse count scales linearly with hours of wakefulness beyond about 16 h, and that after two nights without sleep people routinely produce lapses on a third of all trials. A fresh operator usually has zero.
+
+The test also reports **response speed** — the mean of `1 / RT` rather than the mean of `RT`. It's the metric the PVT literature now prefers because it weights the slow tail more fairly and is better behaved under skew than raw mean RT.
+
+## Why it's the gold standard
+
+Most cognitive tasks have a learning curve. Run them twice and scores go up; run them ten times and you're measuring practice rather than state. The PVT has essentially no practice effect — there is nothing to get better at beyond a ceiling that people hit in the first minute. It also has no explicit *reward* component, which means motivation can't paper over fatigue the way it can in a Stroop test. That combination — boring, transparent, and unfakeable — is what makes it useful in environments where the stakes are real: trucking cabs, submarines, the ISS, overnight surgeons. A 2011 NASA study on astronauts actually showed measurable lapse increases during the final weeks of six-month missions, tracking self-reported fatigue better than any subjective scale did.
+
+## Implementation notes
+
+Three things matter for a PVT to produce honest numbers:
+
+```ts
+// 1. Use performance.now(), not Date.now(). It's monotonic and unaffected by clock skew.
+stimulusStart = performance.now();
+// ...
+const rt = performance.now() - stimulusStart;
+```
+
+Second, the inter-stimulus interval must be **uniformly random** across a decent range — 2–10 s here. Any hint of rhythm and subjects start timing the trials, which collapses the attention demand. Third, false starts must be detected and excluded from the RT distribution; otherwise the test becomes a race rather than a vigilance measure. A response during the wait phase here aborts the trial and is logged separately.
+
+The counter animation uses `requestAnimationFrame` to paint roughly every 16 ms, but the reaction time itself is computed from the sub-millisecond `performance.now()` delta between stimulus onset and keypress — so the displayed number is only a visual cue and not what goes into the stats. On a typical laptop that puts the intrinsic measurement noise floor somewhere around 1–5 ms, which is well below the thing we actually care about: the growing weight of the slow tail when you haven't slept.

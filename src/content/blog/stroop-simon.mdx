@@ -1,0 +1,27 @@
+---
+title: "Stroop Simon"
+description: "Infinite Simon, but you have to remember the ink color — not the word."
+pubDate: "2026-04-16"
+category: project
+---
+
+import StroopSimonGame from '../../components/StroopSimonGame.astro';
+
+A tiny browser toy that mashes two classics together: the **Simon** memory game, and the **Stroop effect** from cognitive psychology. Each round shows you a sequence of colored words, where the *word* and its *ink color* often disagree. Your job is to repeat back the **ink colors** in order — ignoring what the letters spell.
+
+## How to play
+
+1. Press **Start**. A short sequence plays in the center panel.
+2. Each cue is a color word (e.g. `GREEN`) drawn in an ink color that usually doesn't match.
+3. Tap the four colored pads — Red, Blue, Green, Yellow — in the order the **inks** appeared.
+4. Nail it, and the next round adds one more cue. Miss, and the run ends.
+
+Keyboard: keys `1-4` map to the pads, `Space` starts and restarts. Your best round is saved locally.
+
+## Play
+
+<StroopSimonGame />
+
+## Why it's harder than it looks
+
+The Stroop effect, first described by John Ridley Stroop in 1935, is the delay you feel when the semantic meaning of a word fights its visual attribute. Reading is so automatic that the word `BLUE` pulls your attention toward "blue" even when the ink is red. Stacking that interference on top of a Simon-style growing sequence turns a short-term memory task into a test of inhibitory control. It's a reminder that human attention is more reflex than decision.

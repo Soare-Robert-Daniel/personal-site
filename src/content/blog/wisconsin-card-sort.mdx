@@ -1,0 +1,51 @@
+---
+title: "Wisconsin Card Sort"
+description: "Figure out the hidden rule, then figure out the next one. A reproduction of the classic WCST — a frontal-lobe flexibility probe disguised as a card game."
+pubDate: "2026-04-16"
+category: project
+---
+
+import WisconsinCardSort from '../../components/WisconsinCardSort.astro';
+
+The Wisconsin Card Sorting Test started life in 1948 as a little experiment by Esta Berg and David Grant at the University of Wisconsin: give people a deck of cards that vary on three dimensions — color, shape, and number — and ask them to match each one to one of four "key" cards. The catch is that the matching rule is never told. The only signal is *correct* or *wrong* after each sort, and the rule changes silently every so often. Brenda Milner's 1963 study of patients with frontal-lobe lesions turned the WCST into a clinical staple: her patients could learn the first rule, but once it changed they kept right on sorting by it, even while being told they were wrong. That stuck-in-the-groove behaviour — **perseveration** — is still the signature the test is most famous for measuring.
+
+## How to play
+
+1. Press **Start**. Four key cards are shown; a response card appears below them.
+2. Click the key card you think the response card matches, or press `1`–`4`.
+3. You'll only be told **correct** or **wrong** — not why. Use that feedback to discover the rule.
+4. After 10 consecutive correct sorts, the rule switches silently. The game ends after six categories or when the deck runs out.
+
+## Play
+
+<WisconsinCardSort />
+
+## What the numbers at the end mean
+
+The summary panel shows a handful of metrics that are standard in the clinical literature, mostly following Heaton's scoring manual:
+
+- **Perseverative errors** — the one everyone cares about. A wrong answer is scored as perseverative if it would have been correct under the *previous* rule. Lots of perseveration means you figured out the first rule fine, but kept applying it after the floor shifted. Elevated in frontal-lobe lesions, Parkinson's, schizophrenia, and a dozen other conditions where cognitive flexibility takes a hit.
+- **Non-perseverative errors** — everything else wrong. This is a rougher measure of how noisy the discovery process is.
+- **Trials to first category** — how long it took to find the opening rule. A clean proxy for concept formation (vs. cognitive flexibility, which is more about the switches that follow).
+- **Failure to maintain set** — times you strung together 5+ correct answers and then dropped the thread before reaching 10. Partial learning that slipped; thought to reflect attentional lapses separable from perseveration.
+- **Conceptual-level responses** — the proportion of trials that sit inside a run of 3+ consecutive correct. Heaton's rationale is that runs of three or more are statistically unlikely to happen by guessing, so the ratio approximates how often you were sorting with a real hypothesis rather than fishing.
+
+What makes the WCST genuinely interesting is that these metrics *dissociate*. You can have a perfectly normal number of categories completed — even fast first-category acquisition — and still produce a pile of perseverative errors. That combination is what pushed Milner and later Heaton to argue the test isn't really about intelligence or even memory in any narrow sense; it's about the executive machinery that decides *when to let go of a strategy that used to work*.
+
+## Implementation notes
+
+Two design choices worth flagging. First, the response deck is the full 4×4×4 = 64 cross-product of color, shape, and number, shuffled (128 if you toggle the full-deck option). That matches the original stimulus set and means every trial has an unambiguous correct-for-each-dimension answer — though some cards match the same key card on two dimensions at once, which the scoring handles naturally because only the current rule's dimension decides.
+
+Second, perseveration is scored using a reasonable approximation of the Heaton rule. When the hidden rule switches, the previous rule is kept in a "perseveration window" — any error where the subject's choice would have been correct under that previous rule is classified as perseverative. The window closes after the subject makes three consecutive correct answers under the new rule, which is the usual convention for deciding that the old strategy has genuinely been abandoned:
+
+```ts
+if (chosenIsCorrect) {
+  if (previousRule !== null) correctsUnderNewRule += 1;
+  if (correctsUnderNewRule >= 3) previousRule = null;
+} else if (previousRule) {
+  if (slot === matchingSlot(card, previousRule)) perseverativeErrors += 1;
+  else nonPerseverativeErrors += 1;
+}
+```
+
+That's the whole trick: the test looks like a card game, but every wrong answer is quietly being classified against a rule you haven't been told exists.

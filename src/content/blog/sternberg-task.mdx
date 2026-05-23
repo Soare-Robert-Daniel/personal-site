@@ -1,0 +1,45 @@
+---
+title: "Sternberg Memory Search"
+description: "How fast can you tell whether a letter was in the set you saw a moment ago? A reproduction of Saul Sternberg's 1966 reaction-time task."
+pubDate: "2026-04-16"
+category: project
+---
+
+import SternbergTask from '../../components/SternbergTask.astro';
+
+In 1966, Saul Sternberg ran a tiny experiment that has been repeated in psychology labs ever since. He showed people a short list of digits, then — after a pause — flashed a single "probe" digit and asked the simplest possible question: *was it in the list?* The striking finding was that the time to answer grew almost perfectly linearly with the length of the list, about 38 ms per extra item, and that yes/no answers had the same slope. Sternberg read that as evidence for a **serial, exhaustive** scan of short-term memory: the brain seems to check every item before it commits to an answer, even after it has already found a match.
+
+## How to play
+
+1. Press **Start**. Each trial shows a short set of letters to memorise, then a blank gap, then a single probe letter.
+2. Answer as fast as you can: <kbd>J</kbd> or the Yes pad if the probe was in the set, <kbd>F</kbd> or the No pad if it wasn't. Arrow keys work too.
+3. Set size varies across trials — 1, 2, 4, or 6 letters. A full block is 24 trials (6 per set size, shuffled).
+4. At the end you get mean reaction time per set size, an accuracy breakdown, and the fitted line `RT ≈ a + b · n`. The slope `b` is the Sternberg signature — typical values are ~30–50 ms/item.
+
+Toggle **Display** between *Sequential* (items flashed one after another, like the original study) and *Simultaneous* (all items at once) if you want to compare encoding strategies.
+
+## Play
+
+<SternbergTask />
+
+## What the slope is telling you
+
+The intercept `a` absorbs all the time that doesn't depend on set size: perceiving the probe, making the yes/no decision, moving a finger to a key. The slope `b` is the piece that scales with *how many things you have to check*. A few interpretations live in the literature:
+
+- **Serial exhaustive search (Sternberg's original).** The brain compares the probe to every item and only then reports a match. Predicts equal slopes for yes and no trials — and that's roughly what he found.
+- **Parallel limited-capacity search.** Items are compared at once but share a fixed pool of resources, which also produces linear-looking RT-vs-n under many parameterisations. Hard to tell apart from serial scanning with RT alone.
+- **Strength / familiarity models.** The probe triggers a global match signal that grows slower with bigger sets because of interference. Popular in later recognition-memory work (REM, MINERVA, etc.).
+
+Fifty years on, nobody has settled the debate — which is part of why the paradigm is still worth running. What's robust across replications is the near-linearity itself, and the fact that the slope is usually in the 30–60 ms/item range for letters and digits, rising with more complex material.
+
+## Implementation notes
+
+The task is a small state machine: `fixation → encode → retain → probe → feedback`, with timing done via `await sleep(ms)` between phases. The probe's onset is timestamped with `performance.now()`, and reaction time is computed against the first valid keypress — which matters, because `performance.now()` is monotonic and ignores wall-clock adjustments:
+
+```ts
+probeShownAt = performance.now();
+// later, on keydown:
+const rt = performance.now() - probeShownAt;
+```
+
+The slope itself is an ordinary least-squares fit over the four mean RTs (one per set size), using only **correct** trials so that error-driven outliers don't dominate. That is the same filtering Sternberg used in the original paper, and it's what makes the reported slope comparable to the textbook numbers.

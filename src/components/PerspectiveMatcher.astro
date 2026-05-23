@@ -1,0 +1,737 @@
+---
+---
+
+<div id="pm-wrapper">
+	<div id="pm-stage-container">
+		<div id="pm-hud">
+			<div class="pm-hud-item"><span class="pm-hud-label">Round</span><span id="pm-round">0</span></div>
+			<div class="pm-hud-item"><span class="pm-hud-label">Score</span><span id="pm-score">0</span></div>
+			<div class="pm-hud-item"><span class="pm-hud-label">Timer</span><span id="pm-timer">—</span></div>
+			<div class="pm-hud-item"><span class="pm-hud-label">Best</span><span id="pm-best">0</span></div>
+		</div>
+		<div id="pm-canvas-wrap">
+			<canvas id="pm-canvas" role="application" aria-label="Perspective Matcher 3D puzzle"></canvas>
+			<div id="pm-align-wrap" class="pm-hidden" aria-live="polite">
+				<span class="pm-align-label">Alignment</span>
+				<div class="pm-align-bar"><div id="pm-align-fill"></div></div>
+				<span id="pm-align-value">0%</span>
+			</div>
+			<span class="pm-hint">drag to rotate · scroll to zoom</span>
+		</div>
+		<div id="pm-status" aria-live="polite">Press Start. Memorise the shape, then reconstruct the angle.</div>
+	</div>
+	<div id="pm-controls">
+		<div class="pm-buttons">
+			<button id="pm-start" type="button">▶ Start</button>
+			<button id="pm-lock" type="button" disabled>◎ Lock in</button>
+			<button id="pm-next" type="button" disabled>⇢ Next</button>
+			<button id="pm-restart" type="button" disabled>↺ Restart</button>
+		</div>
+		<span class="pm-controls-hint">keys: space = start / lock / next · R = restart</span>
+	</div>
+</div>
+
+<script>
+	import * as THREE from 'three';
+	import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+	type Phase = 'idle' | 'reveal' | 'explode' | 'solve' | 'result';
+
+	interface Fragment {
+		mesh: THREE.Mesh;
+		solved: THREE.Vector3;
+		exploded: THREE.Vector3;
+	}
+
+	// 5x7 bitmap letters. 'X' = filled cell.
+	const GLYPHS: Record<string, string[]> = {
+		A: [
+			'..X..',
+			'.X.X.',
+			'X...X',
+			'XXXXX',
+			'X...X',
+			'X...X',
+			'X...X',
+		],
+		H: [
+			'X...X',
+			'X...X',
+			'X...X',
+			'XXXXX',
+			'X...X',
+			'X...X',
+			'X...X',
+		],
+		T: [
+			'XXXXX',
+			'..X..',
+			'..X..',
+			'..X..',
+			'..X..',
+			'..X..',
+			'..X..',
+		],
+		X: [
+			'X...X',
+			'.X.X.',
+			'..X..',
+			'..X..',
+			'..X..',
+			'.X.X.',
+			'X...X',
+		],
+		K: [
+			'X...X',
+			'X..X.',
+			'X.X..',
+			'XX...',
+			'X.X..',
+			'X..X.',
+			'X...X',
+		],
+		I: [
+			'XXXXX',
+			'..X..',
+			'..X..',
+			'..X..',
+			'..X..',
+			'..X..',
+			'XXXXX',
+		],
+	};
+	const GLYPH_KEYS = Object.keys(GLYPHS);
+
+	const CELL = 0.5;
+	const CUBE_SIZE = 0.38;
+	const GRID_W = 5;
+	const GRID_H = 7;
+
+	const BEST_KEY = 'perspective-matcher:best';
+	const CAM_RADIUS = 5.2;
+
+	const canvas = document.getElementById('pm-canvas') as HTMLCanvasElement;
+	const wrap = document.getElementById('pm-canvas-wrap')!;
+	const roundEl = document.getElementById('pm-round')!;
+	const scoreEl = document.getElementById('pm-score')!;
+	const timerEl = document.getElementById('pm-timer')!;
+	const bestEl = document.getElementById('pm-best')!;
+	const statusEl = document.getElementById('pm-status')!;
+	const alignWrap = document.getElementById('pm-align-wrap')!;
+	const alignFill = document.getElementById('pm-align-fill')!;
+	const alignValue = document.getElementById('pm-align-value')!;
+	const startBtn = document.getElementById('pm-start') as HTMLButtonElement;
+	const lockBtn = document.getElementById('pm-lock') as HTMLButtonElement;
+	const nextBtn = document.getElementById('pm-next') as HTMLButtonElement;
+	const restartBtn = document.getElementById('pm-restart') as HTMLButtonElement;
+
+	// ----- Three.js scaffolding -----
+
+	const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true });
+	renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+
+	const scene = new THREE.Scene();
+	const camera = new THREE.PerspectiveCamera(50, wrap.clientWidth / wrap.clientHeight, 0.1, 500);
+	camera.position.set(0, 0, CAM_RADIUS);
+
+	const controls = new OrbitControls(camera, renderer.domElement);
+	controls.enableDamping = true;
+	controls.dampingFactor = 0.1;
+	controls.enablePan = false;
+	controls.minDistance = 3.5;
+	controls.maxDistance = 9;
+	controls.enabled = false;
+
+	scene.add(new THREE.AmbientLight(0xffffff, 0.55));
+	const keyLight = new THREE.DirectionalLight(0xffffff, 0.8);
+	keyLight.position.set(3, 4, 5);
+	scene.add(keyLight);
+	const rimLight = new THREE.DirectionalLight(0x00f0ff, 0.25);
+	rimLight.position.set(-3, -2, -4);
+	scene.add(rimLight);
+
+	// All fragments hang under one group so they can be moved/rotated as a unit.
+	const sculpture = new THREE.Group();
+	scene.add(sculpture);
+
+	// Subtle reference plane (hidden outside reveal) that reads the silhouette.
+	const planeGeom = new THREE.PlaneGeometry(GRID_W * CELL + 0.2, GRID_H * CELL + 0.2);
+	const planeMat = new THREE.MeshBasicMaterial({
+		color: 0x00f0ff,
+		transparent: true,
+		opacity: 0.05,
+		side: THREE.DoubleSide,
+		depthWrite: false,
+	});
+	const refPlane = new THREE.Mesh(planeGeom, planeMat);
+	refPlane.visible = false;
+	sculpture.add(refPlane);
+
+	// ----- Game state -----
+
+	let phase: Phase = 'idle';
+	let round = 0;
+	let score = 0;
+	let best = 0;
+	let fragments: Fragment[] = [];
+	let currentGlyph = 'A';
+	let revealEndsAt = 0;
+	let revealTimer: number | null = null;
+
+	let explodeAnim: {
+		start: number;
+		duration: number;
+		direction: 'out' | 'in';
+		camFrom: THREE.Vector3;
+		camTo: THREE.Vector3;
+	} | null = null;
+
+	// Sculpture orientation for the current round. Regenerated each reveal so the
+	// "magic angle" moves every round; the solved camera direction is Q*(0,0,+1).
+	let sculptureQuat = new THREE.Quaternion();
+
+	const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+	const tmpFwd = new THREE.Vector3();
+	const tmpLocalZ = new THREE.Vector3();
+
+	function loadBest() {
+		try {
+			const b = parseInt(localStorage.getItem(BEST_KEY) || '0', 10);
+			if (!Number.isNaN(b)) best = b;
+		} catch (_) {}
+		bestEl.textContent = String(best);
+	}
+	function saveBest() {
+		try { localStorage.setItem(BEST_KEY, String(best)); } catch (_) {}
+	}
+
+	function setStatus(text: string) { statusEl.textContent = text; }
+
+	function disposeFragments() {
+		for (const f of fragments) {
+			sculpture.remove(f.mesh);
+			f.mesh.geometry.dispose();
+			(f.mesh.material as THREE.Material).dispose();
+		}
+		fragments = [];
+	}
+
+	function buildFragmentsForGlyph(glyph: string) {
+		disposeFragments();
+		const rows = GLYPHS[glyph];
+		// Harder rounds get a larger z-spread.
+		const zRange = Math.min(1.2 + (round - 1) * 0.25, 2.6);
+		const cx = (GRID_W - 1) * CELL / 2;
+		const cy = (GRID_H - 1) * CELL / 2;
+
+		for (let r = 0; r < GRID_H; r++) {
+			for (let c = 0; c < GRID_W; c++) {
+				if (rows[r][c] !== 'X') continue;
+				// Flip y so row 0 is at the top.
+				const solved = new THREE.Vector3(c * CELL - cx, -(r * CELL - cy), 0);
+				// Keep exactly the solved XY, only scatter Z — this is what makes
+				// the silhouette a function of viewing angle alone.
+				const z = (Math.random() * 2 - 1) * zRange;
+				const exploded = new THREE.Vector3(solved.x, solved.y, z);
+
+				const geom = new THREE.BoxGeometry(CUBE_SIZE, CUBE_SIZE, CUBE_SIZE);
+				const mat = new THREE.MeshStandardMaterial({
+					color: 0x00f0ff,
+					emissive: 0x00f0ff,
+					emissiveIntensity: 0.35,
+					roughness: 0.3,
+					metalness: 0.2,
+				});
+				const mesh = new THREE.Mesh(geom, mat);
+				mesh.position.copy(solved);
+				sculpture.add(mesh);
+				fragments.push({ mesh, solved, exploded });
+			}
+		}
+	}
+
+	function randomSculptureQuat(): THREE.Quaternion {
+		// Scale rotation range with round so early rounds stay readable and late
+		// rounds can land anywhere on the sphere.
+		const step = Math.min(round - 1, 7);
+		const minAngle = THREE.MathUtils.degToRad(25 + step * 8);   // 25°..81°
+		const maxAngle = THREE.MathUtils.degToRad(70 + step * 14);  // 70°..168°
+		const angle = minAngle + Math.random() * (maxAngle - minAngle);
+		const axis = new THREE.Vector3(
+			Math.random() * 2 - 1,
+			Math.random() * 2 - 1,
+			Math.random() * 2 - 1
+		);
+		if (axis.lengthSq() < 1e-4) axis.set(1, 0, 0);
+		axis.normalize();
+		return new THREE.Quaternion().setFromAxisAngle(axis, angle);
+	}
+
+	// Camera world position that looks down the sculpture's local -Z axis —
+	// i.e. the one viewpoint from which the silhouette reconstructs.
+	function solvedCamPos(): THREE.Vector3 {
+		return new THREE.Vector3(0, 0, CAM_RADIUS).applyQuaternion(sculptureQuat);
+	}
+
+	// Pick a start position 65°..130° away from the solved direction on the
+	// viewing sphere, so the player always has real work to do.
+	function scatteredCamPos(): THREE.Vector3 {
+		const solved = solvedCamPos();
+		const minOff = THREE.MathUtils.degToRad(65);
+		const maxOff = THREE.MathUtils.degToRad(130);
+		const off = minOff + Math.random() * (maxOff - minOff);
+		const axis = new THREE.Vector3(
+			Math.random() * 2 - 1,
+			Math.random() * 2 - 1,
+			Math.random() * 2 - 1
+		);
+		if (axis.lengthSq() < 1e-4) axis.set(0, 1, 0);
+		axis.normalize();
+		const rot = new THREE.Quaternion().setFromAxisAngle(axis, off);
+		return solved.applyQuaternion(rot);
+	}
+
+	function alignmentCos(): number {
+		camera.getWorldDirection(tmpFwd); // unit forward in world
+		// Solved direction for forward is -Q*(0,0,1); perfect when their dot == 1.
+		tmpLocalZ.set(0, 0, 1).applyQuaternion(sculptureQuat); // sculpture +Z in world
+		return THREE.MathUtils.clamp(-tmpFwd.dot(tmpLocalZ), -1, 1);
+	}
+
+	// ----- Phase transitions -----
+
+	function enterIdle() {
+		phase = 'idle';
+		controls.enabled = false;
+		disposeFragments();
+		sculptureQuat.identity();
+		sculpture.quaternion.copy(sculptureQuat);
+		camera.position.set(0, 0, CAM_RADIUS);
+		camera.lookAt(0, 0, 0);
+		controls.update();
+		refPlane.visible = false;
+		alignWrap.classList.add('pm-hidden');
+		timerEl.textContent = '—';
+		startBtn.disabled = false;
+		lockBtn.disabled = true;
+		nextBtn.disabled = true;
+		restartBtn.disabled = true;
+		setStatus('Press Start. Memorise the shape, then reconstruct the angle.');
+	}
+
+	function startRevealPhase() {
+		phase = 'reveal';
+		controls.enabled = false;
+		alignWrap.classList.add('pm-hidden');
+
+		// Choose a glyph not identical to last round (if possible).
+		const choices = GLYPH_KEYS.filter((g) => g !== currentGlyph);
+		currentGlyph = choices[Math.floor(Math.random() * choices.length)] || GLYPH_KEYS[0];
+
+		round += 1;
+		roundEl.textContent = String(round);
+
+		// New random orientation → new magic angle for this round.
+		sculptureQuat = randomSculptureQuat();
+		sculpture.quaternion.copy(sculptureQuat);
+
+		buildFragmentsForGlyph(currentGlyph);
+		for (const f of fragments) f.mesh.position.copy(f.solved);
+
+		camera.position.copy(solvedCamPos());
+		camera.lookAt(0, 0, 0);
+		controls.update();
+		refPlane.visible = true;
+
+		const revealDuration = 3000;
+		revealEndsAt = performance.now() + revealDuration;
+
+		startBtn.disabled = true;
+		lockBtn.disabled = true;
+		nextBtn.disabled = true;
+		restartBtn.disabled = false;
+
+		setStatus(`Memorise the shape: "${currentGlyph}". The fragments will scatter.`);
+		updateTimerDisplay();
+		if (revealTimer !== null) clearInterval(revealTimer);
+		revealTimer = window.setInterval(updateTimerDisplay, 100);
+	}
+
+	function updateTimerDisplay() {
+		if (phase !== 'reveal') { timerEl.textContent = '—'; return; }
+		const ms = Math.max(0, revealEndsAt - performance.now());
+		timerEl.textContent = (ms / 1000).toFixed(1) + 's';
+		if (ms <= 0) {
+			if (revealTimer !== null) { clearInterval(revealTimer); revealTimer = null; }
+			startExplodePhase();
+		}
+	}
+
+	function startExplodePhase() {
+		phase = 'explode';
+		controls.enabled = false;
+		refPlane.visible = false;
+		timerEl.textContent = '—';
+		setStatus('Scattering...');
+
+		const camFrom = camera.position.clone();
+		const camTo = scatteredCamPos();
+
+		if (reducedMotion) {
+			for (const f of fragments) f.mesh.position.copy(f.exploded);
+			camera.position.copy(camTo);
+			camera.lookAt(0, 0, 0);
+			controls.update();
+			enterSolvePhase();
+			return;
+		}
+
+		explodeAnim = {
+			start: performance.now(),
+			duration: 900,
+			direction: 'out',
+			camFrom,
+			camTo,
+		};
+	}
+
+	function enterSolvePhase() {
+		phase = 'solve';
+		controls.enabled = true;
+		controls.target.set(0, 0, 0);
+		controls.update();
+		alignWrap.classList.remove('pm-hidden');
+		lockBtn.disabled = false;
+		setStatus('Rotate the scene to re-form the silhouette, then Lock in.');
+	}
+
+	function scoreLabelFor(cos: number): { label: string; gained: number } {
+		if (cos >= 0.9986) return { label: 'Perfect', gained: 3 };
+		if (cos >= 0.9925) return { label: 'Good', gained: 2 };
+		if (cos >= 0.9659) return { label: 'Close', gained: 1 };
+		return { label: 'Miss', gained: 0 };
+	}
+
+	function enterResultPhase() {
+		const cos = alignmentCos();
+		phase = 'result';
+		controls.enabled = true;
+
+		const { label, gained } = scoreLabelFor(cos);
+		score += gained;
+		scoreEl.textContent = String(score);
+
+		if (score > best) {
+			best = score;
+			bestEl.textContent = String(best);
+			saveBest();
+		}
+
+		lockBtn.disabled = true;
+		nextBtn.disabled = false;
+		restartBtn.disabled = false;
+
+		// Collapse fragments back to z=0 so the silhouette resolves crisply.
+		if (reducedMotion) {
+			for (const f of fragments) f.mesh.position.copy(f.solved);
+			refPlane.visible = true;
+		} else {
+			explodeAnim = {
+				start: performance.now(),
+				duration: 700,
+				direction: 'in',
+				camFrom: camera.position.clone(),
+				camTo: camera.position.clone(),
+			};
+		}
+
+		const pct = Math.round(Math.max(0, cos) * 100);
+		setStatus(`${label} — ${pct}% aligned. +${gained}. Press Next for another round.`);
+	}
+
+	// ----- Input -----
+
+	startBtn.addEventListener('click', () => {
+		if (phase !== 'idle') return;
+		round = 0;
+		score = 0;
+		scoreEl.textContent = '0';
+		startRevealPhase();
+	});
+
+	lockBtn.addEventListener('click', () => {
+		if (phase !== 'solve') return;
+		enterResultPhase();
+	});
+
+	nextBtn.addEventListener('click', () => {
+		if (phase !== 'result') return;
+		startRevealPhase();
+	});
+
+	restartBtn.addEventListener('click', () => {
+		if (revealTimer !== null) { clearInterval(revealTimer); revealTimer = null; }
+		explodeAnim = null;
+		enterIdle();
+		round = 0;
+		score = 0;
+		scoreEl.textContent = '0';
+		startRevealPhase();
+	});
+
+	window.addEventListener('keydown', (e) => {
+		if (e.repeat) return;
+		if (e.code === 'Space') {
+			e.preventDefault();
+			if (phase === 'idle') startBtn.click();
+			else if (phase === 'solve') lockBtn.click();
+			else if (phase === 'result') nextBtn.click();
+			return;
+		}
+		if (e.key === 'r' || e.key === 'R') {
+			if (!restartBtn.disabled) restartBtn.click();
+		}
+	});
+
+	// ----- Render loop -----
+
+	function resize() {
+		const w = wrap.clientWidth;
+		const h = wrap.clientHeight;
+		renderer.setSize(w, h, false);
+		camera.aspect = w / h;
+		camera.updateProjectionMatrix();
+	}
+	resize();
+	window.addEventListener('resize', resize);
+	if ('ResizeObserver' in window) {
+		new ResizeObserver(resize).observe(wrap);
+	}
+
+	function updateAlignmentUI(cos: number) {
+		const v = Math.max(0, cos);
+		const pct = Math.round(v * 100);
+		(alignFill as HTMLElement).style.width = (v * 100).toFixed(1) + '%';
+		alignValue.textContent = pct + '%';
+		const { label } = scoreLabelFor(cos);
+		(alignFill as HTMLElement).style.background =
+			label === 'Perfect' ? '#00ffa8' :
+			label === 'Good' ? '#00f0ff' :
+			label === 'Close' ? '#ffd24d' : '#ff4d88';
+	}
+
+	function animate() {
+		requestAnimationFrame(animate);
+		const now = performance.now();
+
+		if (explodeAnim) {
+			const t = Math.min(1, (now - explodeAnim.start) / explodeAnim.duration);
+			const eased = t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
+			for (const f of fragments) {
+				const [a, b] = explodeAnim.direction === 'out'
+					? [f.solved, f.exploded]
+					: [f.exploded, f.solved];
+				f.mesh.position.lerpVectors(a, b, eased);
+			}
+			if (!explodeAnim.camFrom.equals(explodeAnim.camTo)) {
+				camera.position.lerpVectors(explodeAnim.camFrom, explodeAnim.camTo, eased);
+				camera.lookAt(0, 0, 0);
+			}
+			if (t >= 1) {
+				const dir = explodeAnim.direction;
+				explodeAnim = null;
+				if (dir === 'out') enterSolvePhase();
+				else if (dir === 'in') refPlane.visible = true;
+			}
+		}
+
+		if (phase === 'solve') {
+			const cos = alignmentCos();
+			updateAlignmentUI(cos);
+		}
+
+		controls.update();
+		renderer.render(scene, camera);
+	}
+
+	loadBest();
+	enterIdle();
+	animate();
+</script>
+
+<style>
+	#pm-wrapper {
+		margin: 2rem 0;
+		font-family: inherit;
+	}
+
+	#pm-stage-container {
+		background: #0a0a0f;
+		border: 1px solid rgba(0, 240, 255, 0.15);
+		border-radius: 12px 12px 0 0;
+		padding: 1.25rem 1.25rem 1rem;
+	}
+
+	#pm-hud {
+		display: flex;
+		justify-content: space-around;
+		gap: 0.5rem;
+		margin-bottom: 1rem;
+	}
+
+	.pm-hud-item {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		gap: 0.15rem;
+		font-size: 1.1rem;
+		color: rgba(255, 255, 255, 0.9);
+		font-weight: 700;
+	}
+
+	.pm-hud-label {
+		font-size: 0.7rem;
+		font-weight: 600;
+		letter-spacing: 0.12em;
+		text-transform: uppercase;
+		color: rgba(0, 240, 255, 0.75);
+	}
+
+	#pm-canvas-wrap {
+		position: relative;
+		width: 100%;
+		aspect-ratio: 16 / 10;
+		border-radius: 8px;
+		overflow: hidden;
+		background: radial-gradient(circle at center, rgba(0, 240, 255, 0.05), transparent 70%);
+		border: 1px dashed rgba(0, 240, 255, 0.1);
+		cursor: grab;
+	}
+
+	#pm-canvas-wrap:active { cursor: grabbing; }
+
+	#pm-canvas {
+		width: 100%;
+		height: 100%;
+		display: block;
+	}
+
+	#pm-align-wrap {
+		position: absolute;
+		top: 12px;
+		left: 50%;
+		transform: translateX(-50%);
+		display: flex;
+		align-items: center;
+		gap: 0.6rem;
+		background: rgba(10, 10, 15, 0.85);
+		border: 1px solid rgba(0, 240, 255, 0.3);
+		border-radius: 999px;
+		padding: 0.4rem 1rem;
+		font-size: 0.78rem;
+		color: rgba(255, 255, 255, 0.85);
+		letter-spacing: 0.06em;
+		backdrop-filter: blur(4px);
+		-webkit-backdrop-filter: blur(4px);
+		pointer-events: none;
+	}
+
+	.pm-align-label {
+		font-weight: 600;
+		color: rgba(0, 240, 255, 0.85);
+		text-transform: uppercase;
+		font-size: 0.7rem;
+	}
+
+	.pm-align-bar {
+		width: 140px;
+		height: 6px;
+		background: rgba(255, 255, 255, 0.08);
+		border-radius: 3px;
+		overflow: hidden;
+	}
+
+	#pm-align-fill {
+		width: 0%;
+		height: 100%;
+		background: #00f0ff;
+		transition: width 0.08s linear, background 0.15s linear;
+	}
+
+	#pm-align-value {
+		min-width: 2.4em;
+		text-align: right;
+		font-weight: 700;
+	}
+
+	.pm-hidden { display: none; }
+
+	.pm-hint {
+		position: absolute;
+		bottom: 10px;
+		right: 14px;
+		font-size: 0.7rem;
+		color: rgba(255, 255, 255, 0.3);
+		pointer-events: none;
+	}
+
+	#pm-status {
+		text-align: center;
+		margin-top: 0.8rem;
+		font-size: 0.85rem;
+		color: rgba(255, 255, 255, 0.55);
+		min-height: 1.2em;
+	}
+
+	#pm-controls {
+		background: #111118;
+		border: 1px solid rgba(0, 240, 255, 0.15);
+		border-top: none;
+		border-radius: 0 0 12px 12px;
+		padding: 1rem 1.25rem;
+	}
+
+	.pm-buttons {
+		display: flex;
+		gap: 0.75rem;
+		flex-wrap: wrap;
+	}
+
+	.pm-buttons button {
+		flex: 1;
+		min-width: 110px;
+		padding: 0.55rem 1rem;
+		background: #0a0a0f;
+		color: rgba(255, 255, 255, 0.7);
+		border: 1px solid rgba(0, 240, 255, 0.15);
+		border-radius: 6px;
+		cursor: pointer;
+		font-family: inherit;
+		font-size: 0.9rem;
+		transition: all 0.2s ease;
+	}
+
+	.pm-buttons button:hover:not(:disabled) {
+		border-color: #00f0ff;
+		color: #00f0ff;
+	}
+
+	.pm-buttons button:disabled {
+		opacity: 0.45;
+		cursor: not-allowed;
+	}
+
+	.pm-controls-hint {
+		display: block;
+		text-align: center;
+		font-size: 0.7rem;
+		color: rgba(255, 255, 255, 0.25);
+		margin-top: 0.6rem;
+	}
+
+	@media (max-width: 500px) {
+		#pm-canvas-wrap { aspect-ratio: 4 / 5; }
+		#pm-align-wrap { font-size: 0.7rem; padding: 0.3rem 0.7rem; }
+		.pm-align-bar { width: 90px; }
+	}
+</style>

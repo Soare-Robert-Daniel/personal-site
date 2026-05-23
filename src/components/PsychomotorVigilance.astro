@@ -1,0 +1,805 @@
+---
+---
+
+<div id="pvt-wrapper">
+	<div id="pvt-stage-container">
+		<div id="pvt-hud">
+			<div class="pvt-hud-item"><span class="pvt-hud-label">Trial</span><span id="pvt-trial">0 / 0</span></div>
+			<div class="pvt-hud-item"><span class="pvt-hud-label">Mean RT</span><span id="pvt-mean">—</span></div>
+			<div class="pvt-hud-item"><span class="pvt-hud-label">Fastest</span><span id="pvt-fastest">—</span></div>
+			<div class="pvt-hud-item"><span class="pvt-hud-label">Lapses</span><span id="pvt-lapses">0</span></div>
+		</div>
+		<div id="pvt-stage">
+			<div id="pvt-intro" class="pvt-view">
+				<div class="pvt-intro-title">Psychomotor Vigilance</div>
+				<div class="pvt-intro-body">At random intervals a counter will appear and start climbing.<br />Stop it as fast as you can. Don't jump the gun.</div>
+				<div class="pvt-intro-keys">tap the pad · press <kbd>Space</kbd> · click anywhere in the stage</div>
+			</div>
+			<div id="pvt-wait" class="pvt-view" hidden>
+				<div class="pvt-wait-dot"></div>
+				<div class="pvt-wait-label">Wait for it…</div>
+			</div>
+			<div id="pvt-run" class="pvt-view" hidden>
+				<div id="pvt-counter">0</div>
+				<div class="pvt-run-label">ms</div>
+			</div>
+			<div id="pvt-feedback" class="pvt-view" hidden></div>
+			<div id="pvt-false" class="pvt-view" hidden>
+				<div class="pvt-false-glyph">!</div>
+				<div class="pvt-false-title">False start</div>
+				<div class="pvt-false-sub">You responded before the counter appeared.</div>
+			</div>
+			<div id="pvt-results" class="pvt-view" hidden></div>
+		</div>
+		<div id="pvt-status" aria-live="polite">Press Start to begin. Keep your finger ready.</div>
+	</div>
+	<div id="pvt-pad-wrap">
+		<button id="pvt-pad" type="button" disabled>
+			<span class="pvt-pad-glyph">⊙</span>
+			<span class="pvt-pad-label">Respond <kbd>Space</kbd></span>
+		</button>
+	</div>
+	<div id="pvt-controls">
+		<div class="pvt-buttons">
+			<button id="pvt-start" type="button">▶ Start</button>
+			<button id="pvt-restart" type="button" disabled>↺ Restart</button>
+		</div>
+		<div class="pvt-options">
+			<label class="pvt-toggle">
+				<span>Length</span>
+				<select id="pvt-length">
+					<option value="10">Short · 10 trials</option>
+					<option value="20" selected>Standard · 20 trials</option>
+					<option value="40">Long · 40 trials</option>
+				</select>
+			</label>
+			<div class="pvt-best">
+				<span>Best mean</span>
+				<span id="pvt-best">—</span>
+			</div>
+		</div>
+		<span class="pvt-controls-hint">lapse = RT &gt; 500 ms · false start = response before stimulus</span>
+	</div>
+</div>
+
+<script>
+	type Phase = 'idle' | 'wait' | 'run' | 'feedback' | 'false' | 'done';
+
+	interface Trial {
+		isi: number;
+		rt?: number;
+		lapse?: boolean;
+		falseStart?: boolean;
+	}
+
+	const LAPSE_MS = 500;
+	const MIN_ISI = 2000;
+	const MAX_ISI = 10000;
+	const TIMEOUT_MS = 30000;
+	const BEST_KEY = 'pvt:best-mean';
+
+	const stage = document.getElementById('pvt-stage')!;
+	const introEl = document.getElementById('pvt-intro')!;
+	const waitEl = document.getElementById('pvt-wait')!;
+	const runEl = document.getElementById('pvt-run')!;
+	const counterEl = document.getElementById('pvt-counter')!;
+	const feedbackEl = document.getElementById('pvt-feedback')!;
+	const falseEl = document.getElementById('pvt-false')!;
+	const resultsEl = document.getElementById('pvt-results')!;
+	const statusEl = document.getElementById('pvt-status')!;
+
+	const trialEl = document.getElementById('pvt-trial')!;
+	const meanEl = document.getElementById('pvt-mean')!;
+	const fastestEl = document.getElementById('pvt-fastest')!;
+	const lapsesEl = document.getElementById('pvt-lapses')!;
+
+	const startBtn = document.getElementById('pvt-start') as HTMLButtonElement;
+	const restartBtn = document.getElementById('pvt-restart') as HTMLButtonElement;
+	const pad = document.getElementById('pvt-pad') as HTMLButtonElement;
+	const lengthSelect = document.getElementById('pvt-length') as HTMLSelectElement;
+	const bestEl = document.getElementById('pvt-best')!;
+
+	const views = [introEl, waitEl, runEl, feedbackEl, falseEl, resultsEl];
+
+	let phase: Phase = 'idle';
+	let trials: Trial[] = [];
+	let idx = 0;
+	let trialCount = 20;
+	let waitTimer: number | null = null;
+	let stimulusStart = 0;
+	let rafId: number | null = null;
+	let timeoutTimer: number | null = null;
+	let bestMean: number | null = null;
+
+	function loadPrefs() {
+		try {
+			const raw = localStorage.getItem(BEST_KEY);
+			if (raw !== null) {
+				const v = parseFloat(raw);
+				if (!Number.isNaN(v)) {
+					bestMean = v;
+					bestEl.textContent = `${Math.round(v)} ms`;
+				}
+			}
+		} catch (_) {}
+	}
+
+	function saveBestMean(v: number) {
+		try { localStorage.setItem(BEST_KEY, String(v)); } catch (_) {}
+	}
+
+	function setStatus(text: string) { statusEl.textContent = text; }
+
+	function showView(el: HTMLElement | null) {
+		for (const v of views) v.hidden = v !== el;
+	}
+
+	function setPadDisabled(disabled: boolean) {
+		pad.disabled = disabled;
+	}
+
+	function clearTimers() {
+		if (waitTimer !== null) { clearTimeout(waitTimer); waitTimer = null; }
+		if (timeoutTimer !== null) { clearTimeout(timeoutTimer); timeoutTimer = null; }
+		if (rafId !== null) { cancelAnimationFrame(rafId); rafId = null; }
+	}
+
+	function randomIsi() {
+		return MIN_ISI + Math.random() * (MAX_ISI - MIN_ISI);
+	}
+
+	function buildBlock(n: number): Trial[] {
+		const out: Trial[] = [];
+		for (let i = 0; i < n; i++) out.push({ isi: randomIsi() });
+		return out;
+	}
+
+	function updateHud() {
+		trialEl.textContent = `${Math.min(idx + 1, trials.length)} / ${trials.length}`;
+		const done = trials.slice(0, idx).filter((t) => !t.falseStart && typeof t.rt === 'number');
+		if (done.length === 0) {
+			meanEl.textContent = '—';
+			fastestEl.textContent = '—';
+		} else {
+			const rts = done.map((t) => t.rt as number);
+			const mean = rts.reduce((s, v) => s + v, 0) / rts.length;
+			meanEl.textContent = `${Math.round(mean)} ms`;
+			fastestEl.textContent = `${Math.round(Math.min(...rts))} ms`;
+		}
+		const lapseN = trials.slice(0, idx).filter((t) => t.lapse).length;
+		lapsesEl.textContent = String(lapseN);
+	}
+
+	function runTrial() {
+		const t = trials[idx];
+		if (!t) { finishBlock(); return; }
+		updateHud();
+
+		phase = 'wait';
+		setStatus('Wait for the counter…');
+		setPadDisabled(false);
+		showView(waitEl);
+
+		waitTimer = window.setTimeout(() => {
+			waitTimer = null;
+			phase = 'run';
+			stimulusStart = performance.now();
+			counterEl.textContent = '0';
+			showView(runEl);
+			setStatus('Stop it — now!');
+			tick();
+			timeoutTimer = window.setTimeout(() => {
+				if (phase !== 'run') return;
+				// Treat as a lapse with a censored RT at timeout.
+				const rt = performance.now() - stimulusStart;
+				recordResponse(rt);
+			}, TIMEOUT_MS);
+		}, t.isi);
+	}
+
+	function tick() {
+		rafId = requestAnimationFrame(() => {
+			if (phase !== 'run') return;
+			const elapsed = performance.now() - stimulusStart;
+			counterEl.textContent = String(Math.floor(elapsed));
+			tick();
+		});
+	}
+
+	function respond() {
+		if (phase === 'wait') {
+			// False start.
+			if (waitTimer !== null) { clearTimeout(waitTimer); waitTimer = null; }
+			phase = 'false';
+			const t = trials[idx];
+			t.falseStart = true;
+			setPadDisabled(true);
+			showView(falseEl);
+			setStatus('Too eager. Wait for the counter next time.');
+			window.setTimeout(() => {
+				idx += 1;
+				if (idx >= trials.length) { finishBlock(); return; }
+				runTrial();
+			}, 900);
+			return;
+		}
+		if (phase !== 'run') return;
+		const rt = performance.now() - stimulusStart;
+		recordResponse(rt);
+	}
+
+	function recordResponse(rt: number) {
+		clearTimers();
+		phase = 'feedback';
+		setPadDisabled(true);
+		const t = trials[idx];
+		t.rt = rt;
+		t.lapse = rt > LAPSE_MS;
+
+		const cls = t.lapse ? 'lapse' : (rt < 250 ? 'fast' : 'ok');
+		feedbackEl.innerHTML = `
+			<div class="pvt-feedback-rt ${cls}">${Math.round(rt)} ms</div>
+			<div class="pvt-feedback-sub">${t.lapse ? 'Lapse' : (rt < 250 ? 'Crisp' : 'OK')}</div>
+		`;
+		showView(feedbackEl);
+		setStatus(t.lapse ? 'That counts as a lapse of attention.' : 'Stay sharp.');
+		updateHud();
+		window.setTimeout(() => {
+			idx += 1;
+			if (idx >= trials.length) { finishBlock(); return; }
+			runTrial();
+		}, 700);
+	}
+
+	function computeStats() {
+		const valid = trials.filter((t) => !t.falseStart && typeof t.rt === 'number');
+		const rts = valid.map((t) => t.rt as number).sort((a, b) => a - b);
+		const n = rts.length;
+		const mean = n ? rts.reduce((s, v) => s + v, 0) / n : NaN;
+		const median = n ? rts[Math.floor(n / 2)] : NaN;
+		const fastest10 = n ? rts.slice(0, Math.max(1, Math.floor(n * 0.1))) : [];
+		const slowest10 = n ? rts.slice(Math.max(0, n - Math.max(1, Math.floor(n * 0.1)))) : [];
+		const fastestMean = fastest10.length ? fastest10.reduce((s, v) => s + v, 0) / fastest10.length : NaN;
+		const slowestMean = slowest10.length ? slowest10.reduce((s, v) => s + v, 0) / slowest10.length : NaN;
+		const lapses = trials.filter((t) => t.lapse).length;
+		const falseStarts = trials.filter((t) => t.falseStart).length;
+		// "1 / RT" is the standard PVT metric — response speed, less skewed than mean RT.
+		const speed = n ? rts.reduce((s, v) => s + 1000 / v, 0) / n : NaN;
+		return { rts, mean, median, fastestMean, slowestMean, lapses, falseStarts, speed, n };
+	}
+
+	function finishBlock() {
+		clearTimers();
+		phase = 'done';
+		setPadDisabled(true);
+		const s = computeStats();
+
+		let bestLine = '';
+		if (!Number.isNaN(s.mean) && s.n >= 5) {
+			if (bestMean === null || s.mean < bestMean) {
+				bestMean = s.mean;
+				saveBestMean(s.mean);
+				bestEl.textContent = `${Math.round(s.mean)} ms`;
+				bestLine = `<div class="pvt-best-line">New personal best.</div>`;
+			}
+		}
+
+		const validRts = s.rts;
+		const histBins = 10;
+		const minB = 150;
+		const maxB = 800;
+		const step = (maxB - minB) / histBins;
+		const counts = new Array(histBins).fill(0) as number[];
+		for (const rt of validRts) {
+			const clamped = Math.max(minB, Math.min(maxB - 0.0001, rt));
+			const bin = Math.floor((clamped - minB) / step);
+			counts[bin] += 1;
+		}
+		const maxCount = Math.max(1, ...counts);
+		const histHtml = counts.map((c, i) => {
+			const h = (c / maxCount) * 100;
+			const lo = Math.round(minB + i * step);
+			const isLapse = lo >= LAPSE_MS;
+			return `<span class="pvt-hist-bar ${isLapse ? 'lapse' : ''}" style="height:${h.toFixed(1)}%" title="${lo}–${Math.round(lo + step)} ms: ${c}"></span>`;
+		}).join('');
+
+		const meanText = Number.isNaN(s.mean) ? '—' : `${Math.round(s.mean)} ms`;
+		const medianText = Number.isNaN(s.median) ? '—' : `${Math.round(s.median)} ms`;
+		const fastestText = Number.isNaN(s.fastestMean) ? '—' : `${Math.round(s.fastestMean)} ms`;
+		const slowestText = Number.isNaN(s.slowestMean) ? '—' : `${Math.round(s.slowestMean)} ms`;
+		const speedText = Number.isNaN(s.speed) ? '—' : `${s.speed.toFixed(2)} resp/s`;
+
+		resultsEl.innerHTML = `
+			<div class="pvt-results-title">Session complete</div>
+			<div class="pvt-results-sub">${s.n} valid responses · ${s.falseStarts} false start${s.falseStarts === 1 ? '' : 's'}</div>
+			<div class="pvt-hist">
+				<div class="pvt-hist-track">${histHtml}</div>
+				<div class="pvt-hist-axis"><span>${minB}</span><span class="lapse-mark">${LAPSE_MS}</span><span>${maxB}</span></div>
+			</div>
+			<div class="pvt-metrics">
+				<div><span>Mean</span><em>${meanText}</em></div>
+				<div><span>Median</span><em>${medianText}</em></div>
+				<div><span>Fastest 10%</span><em>${fastestText}</em></div>
+				<div><span>Slowest 10%</span><em>${slowestText}</em></div>
+				<div><span>Lapses (&gt;${LAPSE_MS} ms)</span><em>${s.lapses}</em></div>
+				<div><span>Response speed</span><em>${speedText}</em></div>
+			</div>
+			${bestLine}
+		`;
+		showView(resultsEl);
+		setStatus('Done. Lapses are the signal to watch — they balloon with sleep loss.');
+		startBtn.disabled = true;
+		restartBtn.disabled = false;
+	}
+
+	function startBlock() {
+		clearTimers();
+		trialCount = parseInt(lengthSelect.value, 10) || 20;
+		trials = buildBlock(trialCount);
+		idx = 0;
+		startBtn.disabled = true;
+		restartBtn.disabled = false;
+		lengthSelect.disabled = true;
+		updateHud();
+		runTrial();
+	}
+
+	function restartBlock() {
+		clearTimers();
+		phase = 'idle';
+		trials = [];
+		idx = 0;
+		lengthSelect.disabled = false;
+		setStatus('Starting new session…');
+		window.setTimeout(() => startBlock(), 150);
+	}
+
+	pad.addEventListener('click', (e) => { e.preventDefault(); respond(); });
+
+	stage.addEventListener('click', (e) => {
+		// Allow tapping anywhere on the stage while running/waiting.
+		if (phase === 'wait' || phase === 'run') {
+			e.preventDefault();
+			respond();
+		}
+	});
+
+	startBtn.addEventListener('click', () => { if (phase === 'idle' || phase === 'done') startBlock(); });
+	restartBtn.addEventListener('click', () => { restartBlock(); });
+
+	window.addEventListener('keydown', (e) => {
+		if (e.repeat) return;
+		if (e.code === 'Space') {
+			e.preventDefault();
+			if (phase === 'idle') { startBlock(); return; }
+			if (phase === 'done') { restartBlock(); return; }
+			if (phase === 'wait' || phase === 'run') respond();
+		}
+	});
+
+	loadPrefs();
+	showView(introEl);
+</script>
+
+<style>
+	#pvt-wrapper {
+		margin: 2rem 0;
+		font-family: inherit;
+	}
+
+	#pvt-stage-container {
+		background: #0a0a0f;
+		border: 1px solid rgba(0, 240, 255, 0.15);
+		border-radius: 12px 12px 0 0;
+		padding: 1.25rem 1.25rem 1rem;
+	}
+
+	#pvt-hud {
+		display: flex;
+		justify-content: space-around;
+		gap: 0.5rem;
+		margin-bottom: 1rem;
+		flex-wrap: wrap;
+	}
+
+	.pvt-hud-item {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		gap: 0.15rem;
+		font-size: 1.05rem;
+		color: rgba(255, 255, 255, 0.9);
+		font-weight: 700;
+		min-width: 70px;
+	}
+
+	.pvt-hud-label {
+		font-size: 0.68rem;
+		font-weight: 600;
+		letter-spacing: 0.12em;
+		text-transform: uppercase;
+		color: rgba(0, 240, 255, 0.75);
+	}
+
+	#pvt-stage {
+		position: relative;
+		min-height: 240px;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		border-radius: 8px;
+		background: radial-gradient(circle at center, rgba(0, 240, 255, 0.05), transparent 70%);
+		border: 1px dashed rgba(0, 240, 255, 0.1);
+		padding: 1rem;
+		overflow: hidden;
+		cursor: default;
+	}
+
+	.pvt-view {
+		width: 100%;
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		justify-content: center;
+		gap: 0.6rem;
+		text-align: center;
+		color: rgba(255, 255, 255, 0.85);
+		user-select: none;
+	}
+
+	.pvt-view[hidden] { display: none; }
+
+	#pvt-intro .pvt-intro-title {
+		font-size: 1.4rem;
+		font-weight: 800;
+		letter-spacing: 0.08em;
+		color: #00f0ff;
+	}
+
+	#pvt-intro .pvt-intro-body {
+		font-size: 0.95rem;
+		color: rgba(255, 255, 255, 0.65);
+		line-height: 1.5;
+	}
+
+	#pvt-intro .pvt-intro-keys {
+		font-size: 0.85rem;
+		color: rgba(255, 255, 255, 0.55);
+		margin-top: 0.3rem;
+	}
+
+	.pvt-wait-dot {
+		width: 14px;
+		height: 14px;
+		border-radius: 50%;
+		background: rgba(0, 240, 255, 0.35);
+		box-shadow: 0 0 18px rgba(0, 240, 255, 0.25);
+		animation: pvt-breathe 1.6s ease-in-out infinite;
+	}
+
+	.pvt-wait-label {
+		font-size: 0.85rem;
+		letter-spacing: 0.12em;
+		text-transform: uppercase;
+		color: rgba(255, 255, 255, 0.4);
+	}
+
+	@keyframes pvt-breathe {
+		0%, 100% { transform: scale(0.9); opacity: 0.55; }
+		50% { transform: scale(1.15); opacity: 1; }
+	}
+
+	#pvt-run {
+		cursor: pointer;
+	}
+
+	#pvt-counter {
+		font-size: 4.6rem;
+		font-weight: 800;
+		letter-spacing: 0.05em;
+		color: #00f0ff;
+		text-shadow: 0 0 32px rgba(0, 240, 255, 0.55);
+		font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+		font-variant-numeric: tabular-nums;
+		line-height: 1;
+	}
+
+	.pvt-run-label {
+		font-size: 0.75rem;
+		letter-spacing: 0.25em;
+		text-transform: uppercase;
+		color: rgba(0, 240, 255, 0.65);
+	}
+
+	.pvt-feedback-rt {
+		font-size: 3rem;
+		font-weight: 800;
+		line-height: 1;
+		font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+	}
+	.pvt-feedback-rt.ok { color: #ffffff; }
+	.pvt-feedback-rt.fast { color: #4dff88; text-shadow: 0 0 20px rgba(77,255,136,0.45); }
+	.pvt-feedback-rt.lapse { color: #ff9a4d; text-shadow: 0 0 20px rgba(255,154,77,0.45); }
+
+	.pvt-feedback-sub {
+		font-size: 0.85rem;
+		letter-spacing: 0.12em;
+		text-transform: uppercase;
+		color: rgba(255, 255, 255, 0.55);
+	}
+
+	.pvt-false-glyph {
+		font-size: 3.2rem;
+		font-weight: 800;
+		color: #ff4d4d;
+		text-shadow: 0 0 22px rgba(255,77,77,0.5);
+		line-height: 1;
+	}
+
+	.pvt-false-title {
+		font-size: 1.2rem;
+		font-weight: 800;
+		letter-spacing: 0.08em;
+		color: rgba(255, 255, 255, 0.85);
+	}
+
+	.pvt-false-sub {
+		font-size: 0.85rem;
+		color: rgba(255, 255, 255, 0.55);
+	}
+
+	.pvt-results-title {
+		font-size: 1.2rem;
+		font-weight: 800;
+		letter-spacing: 0.08em;
+		color: #00f0ff;
+	}
+
+	.pvt-results-sub {
+		font-size: 0.85rem;
+		color: rgba(255, 255, 255, 0.55);
+	}
+
+	.pvt-hist {
+		width: 100%;
+		max-width: 380px;
+		margin: 0.4rem auto 0;
+	}
+
+	.pvt-hist-track {
+		height: 70px;
+		display: flex;
+		align-items: flex-end;
+		gap: 2px;
+	}
+
+	.pvt-hist-bar {
+		flex: 1;
+		background: linear-gradient(180deg, #00f0ff, rgba(0, 240, 255, 0.3));
+		border-radius: 2px 2px 0 0;
+		min-height: 2px;
+	}
+
+	.pvt-hist-bar.lapse {
+		background: linear-gradient(180deg, #ff9a4d, rgba(255, 154, 77, 0.3));
+	}
+
+	.pvt-hist-axis {
+		display: flex;
+		justify-content: space-between;
+		font-size: 0.65rem;
+		font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+		color: rgba(255, 255, 255, 0.4);
+		margin-top: 0.2rem;
+	}
+
+	.pvt-hist-axis .lapse-mark {
+		color: rgba(255, 154, 77, 0.75);
+	}
+
+	.pvt-metrics {
+		width: 100%;
+		max-width: 380px;
+		margin: 0.7rem auto 0;
+		display: grid;
+		grid-template-columns: 1fr 1fr;
+		gap: 0.3rem 1rem;
+		font-size: 0.78rem;
+	}
+
+	.pvt-metrics > div {
+		display: flex;
+		justify-content: space-between;
+		align-items: baseline;
+		gap: 0.4rem;
+		border-bottom: 1px dashed rgba(255, 255, 255, 0.08);
+		padding: 0.15rem 0;
+	}
+
+	.pvt-metrics span {
+		color: rgba(255, 255, 255, 0.55);
+	}
+
+	.pvt-metrics em {
+		font-style: normal;
+		font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+		color: rgba(255, 255, 255, 0.85);
+	}
+
+	.pvt-best-line {
+		margin-top: 0.2rem;
+		font-size: 0.8rem;
+		color: #4dff88;
+		text-align: center;
+	}
+
+	#pvt-status {
+		text-align: center;
+		margin-top: 0.8rem;
+		font-size: 0.85rem;
+		color: rgba(255, 255, 255, 0.55);
+		min-height: 1.2em;
+	}
+
+	#pvt-pad-wrap {
+		padding: 1rem;
+		background: #111118;
+		border-left: 1px solid rgba(0, 240, 255, 0.15);
+		border-right: 1px solid rgba(0, 240, 255, 0.15);
+	}
+
+	#pvt-pad {
+		width: 100%;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		gap: 0.8rem;
+		background: #0a0a0f;
+		border: 1px solid rgba(0, 240, 255, 0.2);
+		border-radius: 8px;
+		padding: 1rem 0.4rem;
+		cursor: pointer;
+		font-family: inherit;
+		color: rgba(255, 255, 255, 0.75);
+		transition: transform 0.08s ease, border-color 0.2s ease, box-shadow 0.2s ease;
+	}
+
+	#pvt-pad:hover:not(:disabled) {
+		border-color: #00f0ff;
+		color: #00f0ff;
+	}
+
+	#pvt-pad:active:not(:disabled) {
+		transform: scale(0.98);
+		border-color: #00f0ff;
+		box-shadow: 0 0 22px rgba(0, 240, 255, 0.45);
+	}
+
+	#pvt-pad:disabled {
+		opacity: 0.4;
+		cursor: not-allowed;
+	}
+
+	.pvt-pad-glyph {
+		font-size: 1.6rem;
+		color: #00f0ff;
+	}
+
+	.pvt-pad-label {
+		font-size: 0.9rem;
+		display: flex;
+		align-items: center;
+		gap: 0.4rem;
+	}
+
+	.pvt-pad-label kbd,
+	#pvt-intro kbd {
+		font-size: 0.65rem;
+		padding: 0.05rem 0.35rem;
+		border: 1px solid rgba(255, 255, 255, 0.15);
+		border-radius: 4px;
+		color: rgba(255, 255, 255, 0.5);
+		background: rgba(255, 255, 255, 0.03);
+		font-family: inherit;
+	}
+
+	#pvt-controls {
+		background: #111118;
+		border: 1px solid rgba(0, 240, 255, 0.15);
+		border-top: none;
+		border-radius: 0 0 12px 12px;
+		padding: 1rem 1.25rem;
+	}
+
+	.pvt-buttons {
+		display: flex;
+		gap: 0.75rem;
+	}
+
+	.pvt-buttons button {
+		flex: 1;
+		padding: 0.55rem 1rem;
+		background: #0a0a0f;
+		color: rgba(255, 255, 255, 0.7);
+		border: 1px solid rgba(0, 240, 255, 0.15);
+		border-radius: 6px;
+		cursor: pointer;
+		font-family: inherit;
+		font-size: 0.9rem;
+		transition: all 0.2s ease;
+	}
+
+	.pvt-buttons button:hover:not(:disabled) {
+		border-color: #00f0ff;
+		color: #00f0ff;
+	}
+
+	.pvt-buttons button:disabled {
+		opacity: 0.45;
+		cursor: not-allowed;
+	}
+
+	.pvt-options {
+		display: flex;
+		justify-content: space-between;
+		align-items: center;
+		margin-top: 0.8rem;
+		gap: 1rem;
+		flex-wrap: wrap;
+	}
+
+	.pvt-toggle {
+		display: flex;
+		align-items: center;
+		gap: 0.5rem;
+		font-size: 0.8rem;
+		color: rgba(255, 255, 255, 0.55);
+		cursor: pointer;
+		user-select: none;
+	}
+
+	.pvt-toggle select {
+		background: #0a0a0f;
+		color: rgba(255, 255, 255, 0.8);
+		border: 1px solid rgba(0, 240, 255, 0.15);
+		border-radius: 4px;
+		padding: 0.2rem 0.4rem;
+		font-family: inherit;
+		font-size: 0.8rem;
+	}
+
+	.pvt-toggle select:disabled {
+		opacity: 0.45;
+		cursor: not-allowed;
+	}
+
+	.pvt-best {
+		display: flex;
+		align-items: center;
+		gap: 0.5rem;
+		font-size: 0.8rem;
+		color: rgba(255, 255, 255, 0.55);
+	}
+
+	.pvt-best span:last-child {
+		color: rgba(0, 240, 255, 0.8);
+		font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+	}
+
+	.pvt-controls-hint {
+		display: block;
+		text-align: center;
+		font-size: 0.7rem;
+		color: rgba(255, 255, 255, 0.25);
+		margin-top: 0.6rem;
+	}
+
+	@media (max-width: 500px) {
+		#pvt-counter { font-size: 3.4rem; }
+		.pvt-feedback-rt { font-size: 2.4rem; }
+		#pvt-stage { min-height: 200px; }
+		.pvt-pad-label kbd,
+		#pvt-intro kbd { display: none; }
+		.pvt-metrics { grid-template-columns: 1fr; }
+	}
+</style>

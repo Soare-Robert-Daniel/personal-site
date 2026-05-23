@@ -1,0 +1,51 @@
+---
+title: "The Holographic Vault"
+description: "A 3D spatial-memory puzzle: memorise artifacts floating in a wireframe cube, watch it spin, then click where the missing one was."
+pubDate: "2026-04-16"
+category: project
+---
+
+import HolographicVault from '../../components/HolographicVault.astro';
+
+Most browser memory games are flat — grids, pads, sequences. This one adds a third axis. A transparent wireframe cube floats on screen with a handful of colored artifacts suspended inside it. You get a few seconds to memorise their arrangement, the vault spins to a random orientation, and then one of the artifacts vanishes. Your job is to click exactly where it used to be.
+
+It turns out spatial memory in three dimensions is harder than it sounds once you can no longer use screen coordinates as a crutch.
+
+## How to play
+
+1. Press **Start**. Five-ish artifacts appear inside the vault. You have a few seconds to study them — drag to rotate, scroll to zoom in.
+2. The vault hides the artifacts and rotates to a new orientation.
+3. A prompt appears like "Find the **RED SPHERE**". That artifact is the one that stays hidden; the others come back as decoys in their rotated positions.
+4. Click anywhere in the scene where you think the missing artifact was. Score depends on how close the ray from your click passes to the true 3D point: **Perfect** (< 0.35), **Good** (< 0.75), **Close** (< 1.3), or miss.
+
+Keyboard: `Space` starts and advances rounds, `R` restarts.
+
+## Play
+
+<HolographicVault />
+
+## How it works
+
+There are really only three interesting ideas behind the scene.
+
+**Everything lives under one Group.** The vault's wireframe and all the artifacts are children of a single `THREE.Group`. When it's time to shuffle, we slerp that one group's quaternion to a random orientation — nothing else has to know. Because artifact positions are stored as *local* coordinates, we get the true world position at any time with `vaultGroup.localToWorld(local.clone())`. That's the invariant that makes the scoring trivial.
+
+**The vault uses `EdgesGeometry`.** A normal transparent box looks like a faintly-tinted cube. Wrapping the same geometry in `LineSegments(new EdgesGeometry(box), ...)` gives you that crisp holographic wireframe for free, and you can stack a near-invisible `MeshBasicMaterial` inside for a bit of depth.
+
+```ts
+const box = new THREE.BoxGeometry(3, 3, 3);
+const wire = new THREE.LineSegments(
+  new THREE.EdgesGeometry(box),
+  new THREE.LineBasicMaterial({ color: 0x00f0ff, transparent: true, opacity: 0.65 })
+);
+```
+
+**Clicks are rays, not points.** You can't pick a 3D location from a single 2D click — a click defines an infinite ray through the scene. So we don't try to collide with an invisible hitbox; we just measure how close the ray passes to the target's world position and map that distance to a score bucket. `Raycaster` does the ray setup and `ray.distanceToPoint(worldPos)` does the rest.
+
+```ts
+raycaster.setFromCamera(ndc, camera);
+const world = vaultGroup.localToWorld(target.localPos.clone());
+const distance = raycaster.ray.distanceToPoint(world);
+```
+
+`OrbitControls` lets you inspect the arrangement from different angles during the memorisation phase, which is also the thing that makes this interesting: the more you rotate to study, the more you have to mentally re-rotate when the shuffle lands somewhere else. Human working memory does not love that.

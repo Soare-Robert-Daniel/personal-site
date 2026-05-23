@@ -1,0 +1,62 @@
+---
+title: "Perspective Matcher"
+description: "A 3D sculpture that only reads as a letter from one specific camera angle. Memorise the silhouette, watch it scatter, then rotate the view back into place."
+pubDate: "2026-04-16"
+category: project
+---
+
+import PerspectiveMatcher from '../../components/PerspectiveMatcher.astro';
+
+Anamorphic art — the kind of pavement drawing that looks like a pit in the ground from exactly one spot, and like smeared nonsense from anywhere else — has always felt like the most perfectly *spatial* puzzle. This is a tiny three.js take on the same idea. The scene shows you a letter made of floating cubes for three seconds, scatters the cubes along the viewing axis, and asks you to drag-rotate the camera back to the one angle that reconstructs the shape.
+
+## How to play
+
+1. Press **Start**. A letter appears as a grid of cyan cubes on a faint plane. You have three seconds to memorise *which* letter it is.
+2. The plane disappears and the cubes scatter forward and backward along the viewing axis. The camera tumbles off to a random oblique angle.
+3. Drag the scene around. An alignment bar at the top tells you how close the current camera angle is to the "magic" angle.
+4. When the silhouette looks right, press **Lock in**. Score bands are **Perfect** (≥99.9%), **Good** (≥99.3%), **Close** (≥96.6%), else miss.
+
+Keyboard: `Space` starts / locks in / advances rounds, `R` restarts.
+
+## Play
+
+<PerspectiveMatcher />
+
+## How it works
+
+The game is built around one small observation about projection.
+
+**The cubes' local XY never changes.** Each fragment stores two positions in the sculpture's *local* frame: `solved` (on the letter's plane, `z = 0`) and `exploded` (same XY, random Z). When the scatter animation plays, the cubes slide only along the sculpture's local Z axis. Their shadow onto the sculpture's local XY plane is always identical — it always spells the letter. The silhouette reconstructs for the player exactly when the camera is looking straight down that axis. From any other angle, parallax on the Z offsets pulls each cube sideways by a different amount, and the shape dissolves into noise.
+
+**One group, one transform.** All fragments and a faint reference plane hang under a single `THREE.Group` called `sculpture`. Each round we give the group a random quaternion — so the "magic angle" is different every time. During reveal the camera is placed at `Q * (0, 0, +d)` so the player sees the letter from that round's correct side; during explode the camera is tumbled to a new position 65°–130° away on the viewing sphere so the player always has real work to do.
+
+```ts
+sculpture.quaternion.copy(Q);                       // random each round
+camera.position.copy(new Vector3(0,0,d).applyQuaternion(Q));
+```
+
+**Alignment compares two unit vectors.** Each frame we read the camera's forward and the sculpture's local `+Z` expressed in world space, and take their dot product. Perfect alignment means camera forward points *opposite* to the sculpture's local `+Z`:
+
+```ts
+const fwd = new THREE.Vector3();
+camera.getWorldDirection(fwd);                      // unit forward in world
+const zWorld = new THREE.Vector3(0,0,1)
+  .applyQuaternion(sculpture.quaternion);           // sculpture +Z in world
+const cos = -fwd.dot(zWorld);
+// cos == 1 → perfectly aligned, cos == 0 → perpendicular
+```
+
+The alignment bar shows `cos` directly as a percentage, and the score bands correspond to angular tolerances of roughly 3°, 7°, and 15°.
+
+```ts
+const sculpture = new THREE.Group();
+scene.add(sculpture);
+
+for (const cell of letterGrid) {
+  const cube = new THREE.Mesh(boxGeom, mat);
+  cube.position.copy(cell.solved);
+  sculpture.add(cube);
+}
+```
+
+The little detail that sells it is the result animation: once the player locks in, the cubes slerp back to `z = 0` and the faint reference plane fades in. If the lock-in angle was close, the letter clicks into place sharply; if it was off, you get to see exactly how wrong you were as the cubes glide back through the camera.

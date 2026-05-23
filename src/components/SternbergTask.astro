@@ -1,0 +1,787 @@
+---
+---
+
+<div id="stern-wrapper">
+	<div id="stern-stage-container">
+		<div id="stern-hud">
+			<div class="stern-hud-item"><span class="stern-hud-label">Trial</span><span id="stern-trial">0 / 0</span></div>
+			<div class="stern-hud-item"><span class="stern-hud-label">Set size</span><span id="stern-size">—</span></div>
+			<div class="stern-hud-item"><span class="stern-hud-label">Accuracy</span><span id="stern-acc">—</span></div>
+			<div class="stern-hud-item"><span class="stern-hud-label">Mean RT</span><span id="stern-rt">—</span></div>
+		</div>
+		<div id="stern-stage">
+			<div id="stern-intro" class="stern-view">
+				<div class="stern-intro-title">Memory Search</div>
+				<div class="stern-intro-body">Memorise each set, then decide as fast as you can<br />whether the probe letter was in the set.</div>
+				<div class="stern-intro-keys"><kbd>F</kbd> = No &nbsp;·&nbsp; <kbd>J</kbd> = Yes</div>
+			</div>
+			<div id="stern-fixation" class="stern-view" hidden>+</div>
+			<div id="stern-set" class="stern-view" hidden></div>
+			<div id="stern-blank" class="stern-view" hidden></div>
+			<div id="stern-probe" class="stern-view" hidden></div>
+			<div id="stern-feedback" class="stern-view" hidden></div>
+			<div id="stern-results" class="stern-view" hidden></div>
+		</div>
+		<div id="stern-status" aria-live="polite">Press Start to begin a block of trials.</div>
+	</div>
+	<div id="stern-pads">
+		<button class="stern-pad" data-answer="no" type="button" disabled>
+			<span class="stern-pad-glyph">✕</span>
+			<span class="stern-pad-label">No <kbd>F</kbd></span>
+		</button>
+		<button class="stern-pad" data-answer="yes" type="button" disabled>
+			<span class="stern-pad-glyph">✓</span>
+			<span class="stern-pad-label">Yes <kbd>J</kbd></span>
+		</button>
+	</div>
+	<div id="stern-controls">
+		<div class="stern-buttons">
+			<button id="stern-start" type="button">▶ Start</button>
+			<button id="stern-restart" type="button" disabled>↺ Restart</button>
+		</div>
+		<div class="stern-options">
+			<label class="stern-toggle">
+				<span>Display</span>
+				<select id="stern-mode">
+					<option value="sequential">Sequential</option>
+					<option value="simultaneous">Simultaneous</option>
+				</select>
+			</label>
+			<div class="stern-best">
+				<span>Best slope</span>
+				<span id="stern-best-slope">—</span>
+			</div>
+		</div>
+		<span class="stern-controls-hint">keys: F / J or ◀ / ▶ to answer · space to start</span>
+	</div>
+</div>
+
+<script>
+	type Phase = 'idle' | 'fixation' | 'encode' | 'retain' | 'probe' | 'feedback' | 'done';
+	type Mode = 'sequential' | 'simultaneous';
+	type Answer = 'yes' | 'no';
+
+	interface Trial {
+		setSize: number;
+		memSet: string[];
+		probe: string;
+		inSet: boolean;
+		rt?: number;
+		correct?: boolean;
+	}
+
+	const LETTERS = 'BCDFGHJKLMNPQRSTVWXZ'.split('');
+	const SET_SIZES = [1, 2, 4, 6];
+	const TRIALS_PER_SIZE = 6;
+	const BEST_KEY = 'sternberg:best-slope';
+
+	const wrapper = document.getElementById('stern-wrapper')!;
+	const stage = document.getElementById('stern-stage')!;
+	const introEl = document.getElementById('stern-intro')!;
+	const fixationEl = document.getElementById('stern-fixation')!;
+	const setEl = document.getElementById('stern-set')!;
+	const blankEl = document.getElementById('stern-blank')!;
+	const probeEl = document.getElementById('stern-probe')!;
+	const feedbackEl = document.getElementById('stern-feedback')!;
+	const resultsEl = document.getElementById('stern-results')!;
+	const statusEl = document.getElementById('stern-status')!;
+
+	const trialEl = document.getElementById('stern-trial')!;
+	const sizeEl = document.getElementById('stern-size')!;
+	const accEl = document.getElementById('stern-acc')!;
+	const rtEl = document.getElementById('stern-rt')!;
+
+	const startBtn = document.getElementById('stern-start') as HTMLButtonElement;
+	const restartBtn = document.getElementById('stern-restart') as HTMLButtonElement;
+	const modeSelect = document.getElementById('stern-mode') as HTMLSelectElement;
+	const bestSlopeEl = document.getElementById('stern-best-slope')!;
+	const pads = Array.from(document.querySelectorAll<HTMLButtonElement>('.stern-pad'));
+
+	const views = [introEl, fixationEl, setEl, blankEl, probeEl, feedbackEl, resultsEl];
+
+	let phase: Phase = 'idle';
+	let mode: Mode = 'sequential';
+	let trials: Trial[] = [];
+	let idx = 0;
+	let probeShownAt = 0;
+	let bestSlope: number | null = null;
+	let reducedMotion = false;
+
+	function loadPrefs() {
+		try {
+			const raw = localStorage.getItem(BEST_KEY);
+			if (raw !== null) {
+				const v = parseFloat(raw);
+				if (!Number.isNaN(v)) {
+					bestSlope = v;
+					bestSlopeEl.textContent = `${v.toFixed(1)} ms/item`;
+				}
+			}
+		} catch (_) {}
+		reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+	}
+
+	function saveBestSlope(v: number) {
+		try { localStorage.setItem(BEST_KEY, String(v)); } catch (_) {}
+	}
+
+	function setStatus(text: string) { statusEl.textContent = text; }
+
+	function showView(el: HTMLElement | null) {
+		for (const v of views) v.hidden = v !== el;
+	}
+
+	function setPadsDisabled(disabled: boolean) {
+		pads.forEach((p) => { p.disabled = disabled; });
+	}
+
+	function sleep(ms: number) {
+		return new Promise<void>((resolve) => setTimeout(resolve, ms));
+	}
+
+	function shuffle<T>(arr: T[]): T[] {
+		const a = arr.slice();
+		for (let i = a.length - 1; i > 0; i--) {
+			const j = Math.floor(Math.random() * (i + 1));
+			[a[i], a[j]] = [a[j], a[i]];
+		}
+		return a;
+	}
+
+	function sample<T>(arr: T[], k: number): T[] {
+		return shuffle(arr).slice(0, k);
+	}
+
+	function buildBlock(): Trial[] {
+		const out: Trial[] = [];
+		for (const n of SET_SIZES) {
+			for (let i = 0; i < TRIALS_PER_SIZE; i++) {
+				const memSet = sample(LETTERS, n);
+				const inSet = i < TRIALS_PER_SIZE / 2;
+				let probe: string;
+				if (inSet) {
+					probe = memSet[Math.floor(Math.random() * memSet.length)];
+				} else {
+					const pool = LETTERS.filter((l) => !memSet.includes(l));
+					probe = pool[Math.floor(Math.random() * pool.length)];
+				}
+				out.push({ setSize: n, memSet, probe, inSet });
+			}
+		}
+		return shuffle(out);
+	}
+
+	function updateHud() {
+		trialEl.textContent = `${Math.min(idx + 1, trials.length)} / ${trials.length}`;
+		const t = trials[idx];
+		sizeEl.textContent = t ? String(t.setSize) : '—';
+		const done = trials.slice(0, idx).filter((x) => x.correct !== undefined);
+		if (done.length === 0) {
+			accEl.textContent = '—';
+			rtEl.textContent = '—';
+			return;
+		}
+		const correctN = done.filter((x) => x.correct).length;
+		accEl.textContent = `${Math.round((correctN / done.length) * 100)}%`;
+		const rts = done.filter((x) => x.correct && typeof x.rt === 'number').map((x) => x.rt as number);
+		if (rts.length === 0) { rtEl.textContent = '—'; return; }
+		const mean = rts.reduce((s, v) => s + v, 0) / rts.length;
+		rtEl.textContent = `${Math.round(mean)} ms`;
+	}
+
+	async function runTrial() {
+		const t = trials[idx];
+		if (!t) { finishBlock(); return; }
+		updateHud();
+
+		// Fixation
+		phase = 'fixation';
+		setStatus('Get ready…');
+		setPadsDisabled(true);
+		showView(fixationEl);
+		await sleep(500);
+
+		// Encode
+		phase = 'encode';
+		setStatus(`Memorise these ${t.setSize} letter${t.setSize === 1 ? '' : 's'}.`);
+		if (mode === 'simultaneous') {
+			setEl.innerHTML = t.memSet.map((l) => `<span class="stern-letter">${l}</span>`).join('');
+			showView(setEl);
+			await sleep(400 + 300 * t.setSize);
+		} else {
+			showView(setEl);
+			for (const letter of t.memSet) {
+				setEl.innerHTML = `<span class="stern-letter">${letter}</span>`;
+				if (!reducedMotion) {
+					setEl.classList.remove('stern-pulse');
+					void setEl.offsetWidth;
+					setEl.classList.add('stern-pulse');
+				}
+				await sleep(500);
+				setEl.innerHTML = '';
+				await sleep(150);
+			}
+			setEl.classList.remove('stern-pulse');
+		}
+
+		// Retain
+		phase = 'retain';
+		setStatus('Hold it in mind…');
+		showView(blankEl);
+		await sleep(1000);
+
+		// Probe
+		phase = 'probe';
+		probeEl.innerHTML = `<span class="stern-letter stern-probe-letter">${t.probe}</span>`;
+		showView(probeEl);
+		setStatus('Was this in the set? F = No, J = Yes.');
+		setPadsDisabled(false);
+		probeShownAt = performance.now();
+	}
+
+	function respond(answer: Answer) {
+		if (phase !== 'probe') return;
+		const rt = performance.now() - probeShownAt;
+		const t = trials[idx];
+		t.rt = rt;
+		t.correct = (answer === 'yes') === t.inSet;
+		phase = 'feedback';
+		setPadsDisabled(true);
+		showFeedback(t);
+	}
+
+	async function showFeedback(t: Trial) {
+		feedbackEl.innerHTML = `
+			<div class="stern-feedback-glyph ${t.correct ? 'good' : 'bad'}">${t.correct ? '✓' : '✗'}</div>
+			<div class="stern-feedback-rt">${Math.round(t.rt!)} ms</div>
+			<div class="stern-feedback-sub">${t.correct ? 'Correct' : (t.inSet ? 'It was in the set.' : 'It was not in the set.')}</div>
+		`;
+		showView(feedbackEl);
+		updateHud();
+		await sleep(650);
+		idx += 1;
+		if (idx >= trials.length) { finishBlock(); return; }
+		runTrial();
+	}
+
+	function computeStats() {
+		const perN = new Map<number, { rts: number[]; correct: number; total: number }>();
+		for (const t of trials) {
+			if (t.correct === undefined) continue;
+			let row = perN.get(t.setSize);
+			if (!row) { row = { rts: [], correct: 0, total: 0 }; perN.set(t.setSize, row); }
+			row.total += 1;
+			if (t.correct) { row.correct += 1; if (typeof t.rt === 'number') row.rts.push(t.rt); }
+		}
+		const rows = SET_SIZES.map((n) => {
+			const r = perN.get(n);
+			const meanRt = r && r.rts.length ? r.rts.reduce((s, v) => s + v, 0) / r.rts.length : NaN;
+			const acc = r && r.total ? r.correct / r.total : NaN;
+			return { n, meanRt, acc, count: r ? r.total : 0, correct: r ? r.correct : 0 };
+		});
+
+		const valid = rows.filter((r) => !Number.isNaN(r.meanRt));
+		let slope = NaN;
+		let intercept = NaN;
+		if (valid.length >= 2) {
+			const xs = valid.map((r) => r.n);
+			const ys = valid.map((r) => r.meanRt);
+			const xm = xs.reduce((s, v) => s + v, 0) / xs.length;
+			const ym = ys.reduce((s, v) => s + v, 0) / ys.length;
+			let num = 0, den = 0;
+			for (let i = 0; i < xs.length; i++) {
+				num += (xs[i] - xm) * (ys[i] - ym);
+				den += (xs[i] - xm) ** 2;
+			}
+			slope = den === 0 ? NaN : num / den;
+			intercept = ym - slope * xm;
+		}
+		return { rows, slope, intercept };
+	}
+
+	function finishBlock() {
+		phase = 'done';
+		setPadsDisabled(true);
+		const { rows, slope, intercept } = computeStats();
+
+		const validRts = rows.map((r) => r.meanRt).filter((v) => !Number.isNaN(v));
+		const maxRt = validRts.length ? Math.max(...validRts) : 1;
+		const minRt = validRts.length ? Math.min(...validRts) : 0;
+
+		const barsHtml = rows.map((r) => {
+			if (Number.isNaN(r.meanRt)) {
+				return `<div class="stern-bar-row"><span class="stern-bar-n">n=${r.n}</span><span class="stern-bar-track"></span><span class="stern-bar-val">—</span></div>`;
+			}
+			const pct = maxRt === minRt ? 100 : 20 + ((r.meanRt - minRt) / (maxRt - minRt)) * 80;
+			const accPct = Number.isNaN(r.acc) ? '—' : `${Math.round(r.acc * 100)}%`;
+			return `
+				<div class="stern-bar-row">
+					<span class="stern-bar-n">n=${r.n}</span>
+					<span class="stern-bar-track"><span class="stern-bar-fill" style="width:${pct.toFixed(1)}%"></span></span>
+					<span class="stern-bar-val">${Math.round(r.meanRt)} ms <em>· ${accPct}</em></span>
+				</div>
+			`;
+		}).join('');
+
+		const slopeText = Number.isNaN(slope)
+			? '—'
+			: `RT ≈ ${Math.round(intercept)} + ${slope.toFixed(1)} · n ms`;
+
+		const totalCorrect = rows.reduce((s, r) => s + r.correct, 0);
+		const totalCount = rows.reduce((s, r) => s + r.count, 0);
+		const overallAcc = totalCount ? Math.round((totalCorrect / totalCount) * 100) : 0;
+
+		let bestLine = '';
+		if (!Number.isNaN(slope)) {
+			if (bestSlope === null || Math.abs(slope) < Math.abs(bestSlope)) {
+				bestSlope = slope;
+				saveBestSlope(slope);
+				bestSlopeEl.textContent = `${slope.toFixed(1)} ms/item`;
+				bestLine = `<div class="stern-best-line">New best slope.</div>`;
+			}
+		}
+
+		resultsEl.innerHTML = `
+			<div class="stern-results-title">Block complete</div>
+			<div class="stern-results-sub">Overall accuracy ${overallAcc}% · ${totalCount} trials</div>
+			<div class="stern-bars">${barsHtml}</div>
+			<div class="stern-fit">${slopeText}</div>
+			${bestLine}
+		`;
+		showView(resultsEl);
+		setStatus('Done. The slope is Sternberg\u2019s signature: about 30\u201350 ms per extra item.');
+		startBtn.disabled = true;
+		restartBtn.disabled = false;
+	}
+
+	function startBlock() {
+		phase = 'idle';
+		trials = buildBlock();
+		idx = 0;
+		startBtn.disabled = true;
+		restartBtn.disabled = false;
+		updateHud();
+		runTrial();
+	}
+
+	function restartBlock() {
+		phase = 'idle';
+		trials = [];
+		idx = 0;
+		setStatus('Starting new block…');
+		setTimeout(() => startBlock(), 150);
+	}
+
+	pads.forEach((pad) => {
+		pad.addEventListener('click', () => respond(pad.dataset.answer as Answer));
+	});
+
+	startBtn.addEventListener('click', () => { if (phase === 'idle') startBlock(); });
+	restartBtn.addEventListener('click', () => { restartBlock(); });
+	modeSelect.addEventListener('change', () => { mode = modeSelect.value as Mode; });
+
+	window.addEventListener('keydown', (e) => {
+		if (e.repeat) return;
+		if (e.code === 'Space') {
+			e.preventDefault();
+			if (phase === 'idle') startBlock();
+			else if (phase === 'done') restartBlock();
+			return;
+		}
+		if (phase !== 'probe') return;
+		const k = e.key.toLowerCase();
+		if (k === 'j' || e.key === 'ArrowRight') respond('yes');
+		else if (k === 'f' || e.key === 'ArrowLeft') respond('no');
+	});
+
+	loadPrefs();
+	showView(introEl);
+</script>
+
+<style>
+	#stern-wrapper {
+		margin: 2rem 0;
+		font-family: inherit;
+	}
+
+	#stern-stage-container {
+		background: #0a0a0f;
+		border: 1px solid rgba(0, 240, 255, 0.15);
+		border-radius: 12px 12px 0 0;
+		padding: 1.25rem 1.25rem 1rem;
+	}
+
+	#stern-hud {
+		display: flex;
+		justify-content: space-around;
+		gap: 0.5rem;
+		margin-bottom: 1rem;
+		flex-wrap: wrap;
+	}
+
+	.stern-hud-item {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		gap: 0.15rem;
+		font-size: 1.05rem;
+		color: rgba(255, 255, 255, 0.9);
+		font-weight: 700;
+		min-width: 70px;
+	}
+
+	.stern-hud-label {
+		font-size: 0.68rem;
+		font-weight: 600;
+		letter-spacing: 0.12em;
+		text-transform: uppercase;
+		color: rgba(0, 240, 255, 0.75);
+	}
+
+	#stern-stage {
+		position: relative;
+		min-height: 220px;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		border-radius: 8px;
+		background: radial-gradient(circle at center, rgba(0, 240, 255, 0.05), transparent 70%);
+		border: 1px dashed rgba(0, 240, 255, 0.1);
+		padding: 1rem;
+		overflow: hidden;
+	}
+
+	.stern-view {
+		width: 100%;
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		justify-content: center;
+		gap: 0.6rem;
+		text-align: center;
+		color: rgba(255, 255, 255, 0.85);
+		user-select: none;
+	}
+
+	.stern-view[hidden] { display: none; }
+
+	#stern-intro .stern-intro-title {
+		font-size: 1.4rem;
+		font-weight: 800;
+		letter-spacing: 0.08em;
+		color: #00f0ff;
+	}
+
+	#stern-intro .stern-intro-body {
+		font-size: 0.95rem;
+		color: rgba(255, 255, 255, 0.65);
+		line-height: 1.5;
+	}
+
+	#stern-intro .stern-intro-keys {
+		font-size: 0.85rem;
+		color: rgba(255, 255, 255, 0.55);
+		margin-top: 0.3rem;
+	}
+
+	#stern-fixation {
+		font-size: 3rem;
+		font-weight: 700;
+		color: rgba(0, 240, 255, 0.7);
+	}
+
+	#stern-set {
+		flex-direction: row;
+		gap: 0.8rem;
+		flex-wrap: wrap;
+	}
+
+	.stern-letter {
+		font-size: 3.2rem;
+		font-weight: 800;
+		letter-spacing: 0.08em;
+		color: rgba(255, 255, 255, 0.9);
+		text-shadow: 0 0 24px rgba(0, 240, 255, 0.35);
+		font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+	}
+
+	.stern-probe-letter {
+		font-size: 4rem;
+		color: #00f0ff;
+		text-shadow: 0 0 28px rgba(0, 240, 255, 0.55);
+	}
+
+	#stern-set.stern-pulse .stern-letter {
+		animation: stern-pulse 0.4s ease;
+	}
+
+	@keyframes stern-pulse {
+		0% { transform: scale(0.85); opacity: 0; }
+		40% { transform: scale(1.05); opacity: 1; }
+		100% { transform: scale(1); opacity: 1; }
+	}
+
+	#stern-blank { min-height: 3.2rem; }
+
+	.stern-feedback-glyph {
+		font-size: 3.6rem;
+		font-weight: 800;
+		line-height: 1;
+	}
+	.stern-feedback-glyph.good { color: #4dff88; text-shadow: 0 0 20px rgba(77,255,136,0.45); }
+	.stern-feedback-glyph.bad { color: #ff4d4d; text-shadow: 0 0 20px rgba(255,77,77,0.45); }
+
+	.stern-feedback-rt {
+		font-size: 1.3rem;
+		font-weight: 700;
+		color: rgba(255, 255, 255, 0.85);
+	}
+
+	.stern-feedback-sub {
+		font-size: 0.85rem;
+		color: rgba(255, 255, 255, 0.55);
+	}
+
+	.stern-results-title {
+		font-size: 1.2rem;
+		font-weight: 800;
+		letter-spacing: 0.08em;
+		color: #00f0ff;
+	}
+
+	.stern-results-sub {
+		font-size: 0.85rem;
+		color: rgba(255, 255, 255, 0.55);
+	}
+
+	.stern-bars {
+		width: 100%;
+		max-width: 360px;
+		display: flex;
+		flex-direction: column;
+		gap: 0.35rem;
+		margin: 0.5rem auto 0;
+	}
+
+	.stern-bar-row {
+		display: grid;
+		grid-template-columns: 40px 1fr auto;
+		gap: 0.5rem;
+		align-items: center;
+		font-size: 0.78rem;
+		color: rgba(255, 255, 255, 0.7);
+	}
+
+	.stern-bar-n {
+		font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+		color: rgba(0, 240, 255, 0.75);
+	}
+
+	.stern-bar-track {
+		height: 10px;
+		background: rgba(255, 255, 255, 0.05);
+		border-radius: 5px;
+		overflow: hidden;
+		display: block;
+	}
+
+	.stern-bar-fill {
+		display: block;
+		height: 100%;
+		background: linear-gradient(90deg, rgba(0, 240, 255, 0.4), #00f0ff);
+		border-radius: 5px;
+	}
+
+	.stern-bar-val {
+		font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+		color: rgba(255, 255, 255, 0.8);
+	}
+	.stern-bar-val em {
+		font-style: normal;
+		color: rgba(255, 255, 255, 0.45);
+	}
+
+	.stern-fit {
+		margin-top: 0.6rem;
+		font-size: 0.9rem;
+		font-weight: 700;
+		color: rgba(255, 255, 255, 0.85);
+		font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+	}
+
+	.stern-best-line {
+		margin-top: 0.2rem;
+		font-size: 0.8rem;
+		color: #4dff88;
+	}
+
+	#stern-status {
+		text-align: center;
+		margin-top: 0.8rem;
+		font-size: 0.85rem;
+		color: rgba(255, 255, 255, 0.55);
+		min-height: 1.2em;
+	}
+
+	#stern-pads {
+		display: grid;
+		grid-template-columns: repeat(2, 1fr);
+		gap: 0.6rem;
+		padding: 1rem;
+		background: #111118;
+		border-left: 1px solid rgba(0, 240, 255, 0.15);
+		border-right: 1px solid rgba(0, 240, 255, 0.15);
+	}
+
+	.stern-pad {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		gap: 0.5rem;
+		background: #0a0a0f;
+		border: 1px solid rgba(255, 255, 255, 0.08);
+		border-radius: 8px;
+		padding: 0.9rem 0.4rem;
+		cursor: pointer;
+		font-family: inherit;
+		color: rgba(255, 255, 255, 0.7);
+		transition: transform 0.1s ease, border-color 0.2s ease, box-shadow 0.2s ease;
+	}
+
+	.stern-pad[data-answer="yes"] { --c: #4dff88; }
+	.stern-pad[data-answer="no"] { --c: #ff4d4d; }
+
+	.stern-pad:hover:not(:disabled) {
+		border-color: var(--c);
+		color: var(--c);
+	}
+
+	.stern-pad:active:not(:disabled) {
+		transform: scale(0.97);
+		border-color: var(--c);
+		box-shadow: 0 0 18px color-mix(in srgb, var(--c) 60%, transparent);
+	}
+
+	.stern-pad:disabled {
+		opacity: 0.4;
+		cursor: not-allowed;
+	}
+
+	.stern-pad-glyph {
+		font-size: 1.6rem;
+		font-weight: 800;
+		color: var(--c);
+	}
+
+	.stern-pad-label {
+		font-size: 0.85rem;
+		display: flex;
+		align-items: center;
+		gap: 0.3rem;
+	}
+
+	.stern-pad-label kbd,
+	#stern-intro kbd {
+		font-size: 0.65rem;
+		padding: 0.05rem 0.35rem;
+		border: 1px solid rgba(255, 255, 255, 0.15);
+		border-radius: 4px;
+		color: rgba(255, 255, 255, 0.5);
+		background: rgba(255, 255, 255, 0.03);
+		font-family: inherit;
+	}
+
+	#stern-controls {
+		background: #111118;
+		border: 1px solid rgba(0, 240, 255, 0.15);
+		border-top: none;
+		border-radius: 0 0 12px 12px;
+		padding: 1rem 1.25rem;
+	}
+
+	.stern-buttons {
+		display: flex;
+		gap: 0.75rem;
+	}
+
+	.stern-buttons button {
+		flex: 1;
+		padding: 0.55rem 1rem;
+		background: #0a0a0f;
+		color: rgba(255, 255, 255, 0.7);
+		border: 1px solid rgba(0, 240, 255, 0.15);
+		border-radius: 6px;
+		cursor: pointer;
+		font-family: inherit;
+		font-size: 0.9rem;
+		transition: all 0.2s ease;
+	}
+
+	.stern-buttons button:hover:not(:disabled) {
+		border-color: #00f0ff;
+		color: #00f0ff;
+	}
+
+	.stern-buttons button:disabled {
+		opacity: 0.45;
+		cursor: not-allowed;
+	}
+
+	.stern-options {
+		display: flex;
+		justify-content: space-between;
+		align-items: center;
+		margin-top: 0.8rem;
+		gap: 1rem;
+		flex-wrap: wrap;
+	}
+
+	.stern-toggle {
+		display: flex;
+		align-items: center;
+		gap: 0.5rem;
+		font-size: 0.8rem;
+		color: rgba(255, 255, 255, 0.55);
+		cursor: pointer;
+		user-select: none;
+	}
+
+	.stern-toggle select {
+		background: #0a0a0f;
+		color: rgba(255, 255, 255, 0.8);
+		border: 1px solid rgba(0, 240, 255, 0.15);
+		border-radius: 4px;
+		padding: 0.2rem 0.4rem;
+		font-family: inherit;
+		font-size: 0.8rem;
+	}
+
+	.stern-best {
+		display: flex;
+		align-items: center;
+		gap: 0.5rem;
+		font-size: 0.8rem;
+		color: rgba(255, 255, 255, 0.55);
+	}
+
+	.stern-best span:last-child {
+		color: rgba(0, 240, 255, 0.8);
+		font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+	}
+
+	.stern-controls-hint {
+		display: block;
+		text-align: center;
+		font-size: 0.7rem;
+		color: rgba(255, 255, 255, 0.25);
+		margin-top: 0.6rem;
+	}
+
+	@media (max-width: 500px) {
+		.stern-letter { font-size: 2.4rem; }
+		.stern-probe-letter { font-size: 3rem; }
+		#stern-stage { min-height: 190px; }
+		.stern-pad-label kbd,
+		#stern-intro kbd { display: none; }
+	}
+</style>
