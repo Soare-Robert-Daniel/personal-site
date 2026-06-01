@@ -28,12 +28,17 @@ const posts = allPosts.filter((post) => post.data.category === 'project');
 					<a href="/projects/projects" class="tab active">Projects</a>
 					<a href="/projects/junk" class="tab">Junk</a>
 				</nav>
-				{posts.length === 0 ? (
-					<div class="coming-soon">
-						<span class="soon-text">Coming Soon</span>
-						<p>I'm working on some interesting projects. Stay tuned!</p>
-					</div>
-				) : (
+				<div class="project-links">
+					<a href="/projects/breathe" class="card link-card">
+						<h2>Breathing Exerciser</h2>
+						<p>Beginner-friendly breathing tool with 7 evidence-informed techniques — Belly Breathing, Box Breathing, 4-7-8, Coherent Breathing, Cyclic Sighing, Tactical, and Buteyko.</p>
+					</a>
+					<a href="/projects/digit-memory" class="card link-card">
+						<h2>Digit Memory Trainer</h2>
+						<p>Train your short-term memory for SMS verification codes. A 6-digit code flashes briefly — memorize it and type it back. Adjustable difficulty with per-digit diff feedback.</p>
+					</a>
+				</div>
+				{posts.length > 0 && (
 					<ul class="post-list">
 						{posts.map((post) => (
 							<li>
@@ -129,5 +134,24 @@ const posts = allPosts.filter((post) => post.data.category === 'project');
 		border: 1px solid var(--border-subtle);
 		border-radius: 4px;
 		font-size: 0.75rem;
+	}
+	.project-links {
+		display: grid;
+		grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+		gap: 1rem;
+		margin-bottom: 1.5rem;
+	}
+	.link-card {
+		display: block;
+		color: inherit;
+	}
+	.link-card h2 {
+		margin: 0 0 0.5rem;
+		font-size: 1.3rem;
+	}
+	.link-card p {
+		margin: 0;
+		color: var(--text-muted);
+		font-size: 0.85rem;
 	}
 </style>

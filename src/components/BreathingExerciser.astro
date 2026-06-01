@@ -1,0 +1,919 @@
+---
+---
+
+<div id="breathing-app">
+	<nav id="technique-nav" aria-label="Choose a breathing technique"></nav>
+	<div id="layout">
+		<div id="stage">
+			<div id="visual-area">
+				<canvas id="breath-canvas"></canvas>
+			</div>
+			<p id="next-hint">Press Start, then follow the circle and the words.</p>
+			<div id="phase-timeline" aria-hidden="true"></div>
+			<div id="controls">
+				<button id="btn-start" type="button">Start</button>
+				<button id="btn-reset" type="button">Reset</button>
+			</div>
+			<div id="stats">
+				<span id="cycle-count">Cycles: 0</span>
+				<span id="session-time">Time: 0:00</span>
+			</div>
+		</div>
+		<aside id="guide-card"></aside>
+	</div>
+	<p id="sr-status" class="sr-only" aria-live="polite"></p>
+</div>
+
+<script>
+	type PhaseAction = 'in' | 'hold' | 'out';
+	type Phase = { label: string; duration: number; action: PhaseAction };
+	type Technique = {
+		id: string;
+		name: string;
+		group: string;
+		tagline: string;
+		phases: Phase[];
+		instructions: string[];
+		evidence: string;
+		source: string;
+		safety: string;
+	};
+
+	const ACTION_COLORS: Record<PhaseAction, string> = {
+		in: '#00f0ff',
+		hold: '#f0a000',
+		out: '#00c0a0',
+	};
+
+	const ACTION_SHORT: Record<PhaseAction, string> = {
+		in: 'In',
+		hold: 'Hold',
+		out: 'Out',
+	};
+
+	const GROUP_ORDER = ['start', 'stress', 'sleep', 'focus', 'gentle'];
+	const GROUP_LABELS: Record<string, string> = {
+		start: 'Start here',
+		stress: 'Stress relief',
+		sleep: 'Sleep',
+		focus: 'Focus',
+		gentle: 'Gentle / balance',
+	};
+
+	const TECHNIQUES: Technique[] = [
+		{
+			id: 'diaphragmatic',
+			name: 'Belly Breathing',
+			group: 'start',
+			tagline: 'The foundation — breathe low and slow into your belly.',
+			phases: [
+				{ label: 'Breathe in', duration: 4, action: 'in' },
+				{ label: 'Breathe out', duration: 6, action: 'out' },
+			],
+			instructions: [
+				'Sit comfortably or lie down. Rest one hand on your chest and one on your belly.',
+				'Breathe in slowly through your nose so your belly rises — keep your chest still.',
+				'Breathe out gently through pursed lips and feel your belly fall.',
+			],
+			evidence: 'Recommended by Cleveland Clinic and Harvard Health as the first breathing exercise to learn for everyday calm.',
+			source: 'Cleveland Clinic, Harvard Health',
+			safety: 'Gentle and safe for most people. Keep your breaths soft and never strain.',
+		},
+		{
+			id: 'cyclic-sighing',
+			name: 'Cyclic Sighing',
+			group: 'stress',
+			tagline: 'Two inhales and one long exhale — the fastest mood lift.',
+			phases: [
+				{ label: 'Breathe in', duration: 3, action: 'in' },
+				{ label: 'Top-up breath', duration: 1, action: 'in' },
+				{ label: 'Long breathe out', duration: 6, action: 'out' },
+			],
+			instructions: [
+				'Breathe in through your nose to fill most of your lungs.',
+				'Take a second short sip of air on top to fill them completely.',
+				'Let a long, slow breath out through your mouth until your lungs feel empty.',
+			],
+			evidence: 'In a 2023 Stanford study, five minutes a day of cyclic sighing improved mood more than meditation. Even 1–3 breaths can ease a stressful moment.',
+			source: 'Stanford Medicine, Cell Reports Medicine (2023)',
+			safety: 'Keep the top-up breath small and relaxed. Stop if you feel light-headed.',
+		},
+		{
+			id: 'tactical',
+			name: 'Tactical Breathing',
+			group: 'stress',
+			tagline: 'A simple in-and-out count to calm down fast.',
+			phases: [
+				{ label: 'Breathe in', duration: 4, action: 'in' },
+				{ label: 'Breathe out', duration: 4, action: 'out' },
+			],
+			instructions: [
+				'Breathe in slowly through your nose for a count of four.',
+				'Breathe out slowly through your nose for a count of four.',
+				'Keep the rhythm even and let your shoulders relax.',
+			],
+			evidence: 'Taught to military and police because the plain in-and-out count is easy to follow when you are too stressed to think.',
+			source: 'Lt. Col. Dave Grossman, On Combat',
+			safety: 'No breath holds, so it suits most people. Slow down if you feel rushed.',
+		},
+		{
+			id: '478',
+			name: '4-7-8 Breath',
+			group: 'sleep',
+			tagline: 'A long exhale to help you wind down for sleep.',
+			phases: [
+				{ label: 'Breathe in', duration: 4, action: 'in' },
+				{ label: 'Hold gently', duration: 7, action: 'hold' },
+				{ label: 'Breathe out', duration: 8, action: 'out' },
+			],
+			instructions: [
+				'Breathe in quietly through your nose for a count of four.',
+				'Hold your breath gently for a count of seven.',
+				'Breathe out fully through your mouth for a count of eight. Repeat up to four times.',
+			],
+			evidence: 'Developed by Dr. Andrew Weil; Cleveland Clinic suggests it before bed to relax and fall asleep more easily.',
+			source: 'Cleveland Clinic, Dr. Andrew Weil',
+			safety: 'The 7-second hold can feel long — shorten it if needed and avoid straining.',
+		},
+		{
+			id: 'box',
+			name: 'Box Breathing',
+			group: 'focus',
+			tagline: 'Equal counts in a square to steady your focus.',
+			phases: [
+				{ label: 'Breathe in', duration: 4, action: 'in' },
+				{ label: 'Hold gently', duration: 4, action: 'hold' },
+				{ label: 'Breathe out', duration: 4, action: 'out' },
+				{ label: 'Hold gently', duration: 4, action: 'hold' },
+			],
+			instructions: [
+				'Breathe in through your nose for a count of four.',
+				'Hold your breath gently for a count of four.',
+				'Breathe out for a count of four, then hold empty for four. Repeat.',
+			],
+			evidence: 'Used by the US Navy SEALs and first responders; the even 4-4-4-4 count helps steady focus under pressure.',
+			source: 'WebMD, Verywell Health, Cleveland Clinic',
+			safety: 'If the holds feel uncomfortable, shorten them or try Tactical Breathing instead.',
+		},
+		{
+			id: 'coherent',
+			name: 'Coherent Breathing',
+			group: 'gentle',
+			tagline: 'Slow, even breaths at about five per minute.',
+			phases: [
+				{ label: 'Breathe in', duration: 5, action: 'in' },
+				{ label: 'Breathe out', duration: 5, action: 'out' },
+			],
+			instructions: [
+				'Breathe in smoothly through your nose for a count of five.',
+				'Breathe out smoothly for a count of five.',
+				'Keep it gentle and continuous — about six breaths a minute.',
+			],
+			evidence: 'Breathing about five times a minute lines up with your heart’s natural rhythm and raises heart-rate variability, a marker of calm.',
+			source: 'Resonance / HRV breathing research',
+			safety: 'Very gentle. A good everyday option for general balance.',
+		},
+		{
+			id: 'buteyko',
+			name: 'Buteyko Breathing',
+			group: 'gentle',
+			tagline: 'Lighter nasal breathing with a comfortable pause.',
+			phases: [
+				{ label: 'Small breath in', duration: 2, action: 'in' },
+				{ label: 'Easy breath out', duration: 3, action: 'out' },
+				{ label: 'Comfortable pause', duration: 4, action: 'hold' },
+			],
+			instructions: [
+				'Breathe in gently and quietly through your nose — smaller than usual.',
+				'Let an easy, relaxed breath out through your nose.',
+				'Pause comfortably until you feel a mild urge to breathe, then start again.',
+			],
+			evidence: 'Developed by Dr. Konstantin Buteyko; lighter nasal breathing has its strongest evidence as a support for asthma symptoms (Cochrane review).',
+			source: 'Cochrane review (asthma), Buteyko method',
+			safety: 'Keep the pause comfortable, never forced. If you have asthma or a lung condition, check with your clinician first.',
+		},
+	];
+
+	// DOM refs
+	const canvas = document.getElementById('breath-canvas') as HTMLCanvasElement;
+	const ctx = canvas.getContext('2d')!;
+	const cycleCountEl = document.getElementById('cycle-count')!;
+	const sessionTimeEl = document.getElementById('session-time')!;
+	const nextHint = document.getElementById('next-hint')!;
+	const infoCard = document.getElementById('guide-card')!;
+	const srStatus = document.getElementById('sr-status')!;
+	const btnStart = document.getElementById('btn-start') as HTMLButtonElement;
+	const btnReset = document.getElementById('btn-reset') as HTMLButtonElement;
+	const techniqueNav = document.getElementById('technique-nav')!;
+	const timelineEl = document.getElementById('phase-timeline')!;
+
+	// State
+	let currentTech: Technique = TECHNIQUES[0];
+	let phaseIndex = 0;
+	let phaseElapsed = 0;
+	let cycles = 0;
+	let sessionStart = 0;
+	let running = false;
+	let lastTimestamp = 0;
+	let animId = 0;
+	let timelineSegs: HTMLElement[] = [];
+
+	function rgba(hex: string, alpha: number): string {
+		const r = parseInt(hex.slice(1, 3), 16);
+		const g = parseInt(hex.slice(3, 5), 16);
+		const b = parseInt(hex.slice(5, 7), 16);
+		return `rgba(${r},${g},${b},${alpha})`;
+	}
+
+	function shade(hex: string, factor: number, alpha = 1): string {
+		const r = Math.round(parseInt(hex.slice(1, 3), 16) * factor);
+		const g = Math.round(parseInt(hex.slice(3, 5), 16) * factor);
+		const b = Math.round(parseInt(hex.slice(5, 7), 16) * factor);
+		return `rgba(${r},${g},${b},${alpha})`;
+	}
+
+	// Build technique nav (grouped by goal)
+	GROUP_ORDER.forEach((g) => {
+		const groupTechs = TECHNIQUES.filter((t) => t.group === g);
+		if (!groupTechs.length) return;
+		const wrap = document.createElement('div');
+		wrap.className = 'tech-group';
+		const label = document.createElement('span');
+		label.className = 'group-label';
+		label.textContent = GROUP_LABELS[g];
+		wrap.appendChild(label);
+		const chips = document.createElement('div');
+		chips.className = 'chip-row';
+		groupTechs.forEach((tech) => {
+			const btn = document.createElement('button');
+			btn.type = 'button';
+			btn.className = 'tech-btn' + (tech.id === currentTech.id ? ' active' : '');
+			btn.textContent = tech.name;
+			btn.setAttribute('aria-pressed', tech.id === currentTech.id ? 'true' : 'false');
+			btn.addEventListener('click', () => selectTechnique(tech, btn));
+			chips.appendChild(btn);
+		});
+		wrap.appendChild(chips);
+		techniqueNav.appendChild(wrap);
+	});
+
+	function selectTechnique(tech: Technique, btn: HTMLButtonElement) {
+		if (running) return;
+		currentTech = tech;
+		phaseIndex = 0;
+		phaseElapsed = 0;
+		cycles = 0;
+		document.querySelectorAll('.tech-btn').forEach((b) => {
+			b.classList.remove('active');
+			b.setAttribute('aria-pressed', 'false');
+		});
+		btn.classList.add('active');
+		btn.setAttribute('aria-pressed', 'true');
+		cycleCountEl.textContent = 'Cycles: 0';
+		nextHint.textContent = `${tech.name}: press Start, then follow the circle.`;
+		updateInfo();
+		buildTimeline();
+		setActiveSeg(-1);
+		draw(0);
+	}
+
+	function updateInfo() {
+		const t = currentTech;
+		const cycleTotal = t.phases.reduce((s, p) => s + p.duration, 0);
+		const pattern = t.phases
+			.map((p) => `${ACTION_SHORT[p.action]} ${p.duration}s`)
+			.join(' → ');
+		const steps = t.instructions.map((s) => `<li>${s}</li>`).join('');
+		infoCard.innerHTML = `
+			<div class="guide-head">
+				<h3>${t.name}</h3>
+				<span class="goal-badge">${GROUP_LABELS[t.group]}</span>
+			</div>
+			<p class="tagline">${t.tagline}</p>
+			<p class="pattern">${pattern} <span class="cycle">${cycleTotal}s cycle</span></p>
+			<h4>How to do it</h4>
+			<ol class="steps">${steps}</ol>
+			<h4>Why it helps</h4>
+			<p class="evidence">${t.evidence}</p>
+			<p class="source">Source: ${t.source}</p>
+			<p class="safety">${t.safety}</p>
+		`;
+	}
+
+	function buildTimeline() {
+		timelineEl.innerHTML = '';
+		timelineSegs = [];
+		currentTech.phases.forEach((p) => {
+			const seg = document.createElement('div');
+			seg.className = 'seg';
+			seg.style.flexGrow = String(p.duration);
+			seg.style.setProperty('--seg-color', ACTION_COLORS[p.action]);
+			seg.innerHTML = `<span class="seg-label">${ACTION_SHORT[p.action]}</span><span class="seg-dur">${p.duration}s</span>`;
+			timelineEl.appendChild(seg);
+			timelineSegs.push(seg);
+		});
+	}
+
+	function setActiveSeg(idx: number) {
+		timelineSegs.forEach((s, i) => s.classList.toggle('active', i === idx && running));
+	}
+
+	function setNavDisabled(state: boolean) {
+		document.querySelectorAll('.tech-btn').forEach((b) => {
+			(b as HTMLButtonElement).disabled = state;
+		});
+	}
+
+	function announcePhase() {
+		const phase = currentTech.phases[phaseIndex];
+		srStatus.textContent = `${phase.label} for ${phase.duration} seconds`;
+		setActiveSeg(phaseIndex);
+	}
+
+	// Canvas sizing
+	function resize() {
+		const container = canvas.parentElement!;
+		const rect = container.getBoundingClientRect();
+		const size = Math.min(rect.width, rect.height);
+		const dpr = window.devicePixelRatio || 1;
+		canvas.width = size * dpr;
+		canvas.height = size * dpr;
+		canvas.style.width = size + 'px';
+		canvas.style.height = size + 'px';
+		ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+	}
+
+	const ro = new ResizeObserver(() => {
+		resize();
+		draw(0);
+	});
+	ro.observe(canvas.parentElement!);
+
+	function draw(_timestamp: number) {
+		const w = parseFloat(canvas.style.width);
+		const h = parseFloat(canvas.style.height);
+		const cx = w / 2;
+		const cy = h / 2;
+		const outerR = Math.min(cx, cy) * 0.78;
+		const arcWidth = outerR * 0.1;
+
+		ctx.clearRect(0, 0, w, h);
+
+		const phases = currentTech.phases;
+		const total = phases.reduce((s, p) => s + p.duration, 0);
+		const fullSweep = Math.PI * 2;
+		const gap = phases.length > 1 ? 0.06 : 0;
+		const start = -Math.PI / 2;
+		const LABEL_FONT = '"JetBrains Mono", "Fira Code", monospace';
+
+		// Render a phase label as text following its arc sector, just outside the ring
+		function drawArcLabel(text: string, midAngle: number, sweep: number, alpha: number) {
+			let fontSize = Math.max(13, outerR * 0.13);
+			const radius = outerR + arcWidth / 2 + fontSize * 0.7;
+			ctx.font = `600 ${fontSize}px ${LABEL_FONT}`;
+			const measure = () => {
+				let total2 = 0;
+				for (const ch of text) total2 += ctx.measureText(ch).width;
+				return total2;
+			};
+			let totalAngle = measure() / radius;
+			const maxAngle = Math.max(sweep - gap, 0.001) * 0.98;
+			if (totalAngle > maxAngle) {
+				fontSize = Math.max(9, fontSize * (maxAngle / totalAngle));
+				ctx.font = `600 ${fontSize}px ${LABEL_FONT}`;
+				totalAngle = measure() / radius;
+			}
+
+			ctx.save();
+			ctx.textAlign = 'center';
+			ctx.textBaseline = 'middle';
+			ctx.fillStyle = rgba('#ffffff', alpha);
+			ctx.shadowColor = 'rgba(10,10,15,0.95)';
+			ctx.shadowBlur = Math.max(3, fontSize * 0.4);
+
+			const flip = Math.sin(midAngle) > 0;
+			const dir = flip ? -1 : 1;
+			const rot = flip ? -Math.PI / 2 : Math.PI / 2;
+			let ang = midAngle - dir * (totalAngle / 2);
+			for (const ch of text) {
+				const half = (ctx.measureText(ch).width / 2) / radius;
+				ang += dir * half;
+				ctx.save();
+				ctx.translate(cx + Math.cos(ang) * radius, cy + Math.sin(ang) * radius);
+				ctx.rotate(ang + rot);
+				ctx.fillText(ch, 0, 0);
+				ctx.restore();
+				ang += dir * half;
+			}
+			ctx.restore();
+		}
+
+		// Phase preview segments (faint, or brighter for completed phases this cycle)
+		let a = start;
+		for (let i = 0; i < phases.length; i++) {
+			const p = phases[i];
+			const sweep = (p.duration / total) * fullSweep;
+			const segStart = a + gap / 2;
+			const segEnd = a + sweep - gap / 2;
+			ctx.beginPath();
+			ctx.arc(cx, cy, outerR, segStart, segEnd);
+			ctx.strokeStyle = shade(ACTION_COLORS[p.action], running && i < phaseIndex ? 0.8 : 0.5);
+			ctx.lineWidth = arcWidth;
+			ctx.lineCap = 'butt';
+			ctx.stroke();
+			a += sweep;
+		}
+
+		// Current phase progress (bright)
+		if (running) {
+			const phase = phases[phaseIndex];
+			let a2 = start;
+			for (let i = 0; i < phaseIndex; i++) a2 += (phases[i].duration / total) * fullSweep;
+			const sweep = (phase.duration / total) * fullSweep;
+			const progress = Math.min(phaseElapsed / phase.duration, 1);
+			const segStart = a2 + gap / 2;
+			const segEnd = a2 + sweep * progress - gap / 2;
+			if (segEnd > segStart) {
+				ctx.beginPath();
+				ctx.arc(cx, cy, outerR, segStart, segEnd);
+				ctx.strokeStyle = rgba(ACTION_COLORS[phase.action], 0.95);
+				ctx.lineWidth = arcWidth;
+				ctx.lineCap = 'butt';
+				ctx.stroke();
+			}
+		}
+
+		// Phase labels following each sector (drawn on top of the arcs)
+		let la = start;
+		for (let i = 0; i < phases.length; i++) {
+			const p = phases[i];
+			const sweep = (p.duration / total) * fullSweep;
+			const isActive = running && i === phaseIndex;
+			drawArcLabel(p.label, la + sweep / 2, sweep, isActive ? 1 : 0.55);
+			la += sweep;
+		}
+
+		const action: PhaseAction = running ? phases[phaseIndex].action : 'in';
+		const color = ACTION_COLORS[action];
+
+		// Dashboard-style needle pointing at the current position on the ring
+		let pointerAngle = start;
+		if (running) {
+			const phase = phases[phaseIndex];
+			for (let i = 0; i < phaseIndex; i++) pointerAngle += (phases[i].duration / total) * fullSweep;
+			const progress = Math.min(phaseElapsed / phase.duration, 1);
+			pointerAngle += (phase.duration / total) * fullSweep * progress;
+		}
+
+		const tipR = outerR - arcWidth * 0.55;
+		const perp = pointerAngle + Math.PI / 2;
+		const baseW = Math.max(3, arcWidth * 0.22);
+		const tailR = arcWidth * 0.9;
+		const hubR = Math.max(4, arcWidth * 0.32);
+		const tipX = cx + Math.cos(pointerAngle) * tipR;
+		const tipY = cy + Math.sin(pointerAngle) * tipR;
+
+		ctx.beginPath();
+		ctx.moveTo(cx + Math.cos(perp) * baseW, cy + Math.sin(perp) * baseW);
+		ctx.lineTo(tipX, tipY);
+		ctx.lineTo(cx - Math.cos(perp) * baseW, cy - Math.sin(perp) * baseW);
+		ctx.lineTo(cx - Math.cos(pointerAngle) * tailR, cy - Math.sin(pointerAngle) * tailR);
+		ctx.closePath();
+		ctx.fillStyle = rgba(color, 0.9);
+		ctx.fill();
+
+		ctx.beginPath();
+		ctx.arc(cx, cy, hubR, 0, Math.PI * 2);
+		ctx.fillStyle = rgba(color, 1);
+		ctx.fill();
+		ctx.beginPath();
+		ctx.arc(cx, cy, hubR, 0, Math.PI * 2);
+		ctx.strokeStyle = 'rgba(10,10,15,0.9)';
+		ctx.lineWidth = 2;
+		ctx.stroke();
+	}
+
+	function tick(timestamp: number) {
+		if (!running) return;
+
+		if (lastTimestamp === 0) lastTimestamp = timestamp;
+		const dt = (timestamp - lastTimestamp) / 1000;
+		lastTimestamp = timestamp;
+
+		phaseElapsed += dt;
+
+		const phases = currentTech.phases;
+		const phase = phases[phaseIndex];
+
+		const nextIdx = (phaseIndex + 1) % phases.length;
+		nextHint.textContent = `Next: ${phases[nextIdx].label} (${phases[nextIdx].duration}s)`;
+
+		if (sessionStart > 0) {
+			const elapsed = Math.floor((Date.now() - sessionStart) / 1000);
+			const m = Math.floor(elapsed / 60);
+			const s = elapsed % 60;
+			sessionTimeEl.textContent = `Time: ${m}:${s.toString().padStart(2, '0')}`;
+		}
+
+		draw(timestamp);
+
+		if (phaseElapsed >= phase.duration) {
+			phaseElapsed = 0;
+			phaseIndex++;
+			if (phaseIndex >= phases.length) {
+				phaseIndex = 0;
+				cycles++;
+				cycleCountEl.textContent = `Cycles: ${cycles}`;
+			}
+			announcePhase();
+		}
+
+		animId = requestAnimationFrame(tick);
+	}
+
+	// Controls
+	btnStart.addEventListener('click', () => {
+		if (running) {
+			running = false;
+			btnStart.textContent = 'Resume';
+			cancelAnimationFrame(animId);
+			setNavDisabled(false);
+			setActiveSeg(-1);
+		} else {
+			running = true;
+			if (sessionStart === 0) sessionStart = Date.now();
+			lastTimestamp = 0;
+			btnStart.textContent = 'Pause';
+			setNavDisabled(true);
+			announcePhase();
+			animId = requestAnimationFrame(tick);
+		}
+	});
+
+	btnReset.addEventListener('click', () => {
+		running = false;
+		cancelAnimationFrame(animId);
+		phaseIndex = 0;
+		phaseElapsed = 0;
+		cycles = 0;
+		sessionStart = 0;
+		lastTimestamp = 0;
+		btnStart.textContent = 'Start';
+		setNavDisabled(false);
+		cycleCountEl.textContent = 'Cycles: 0';
+		sessionTimeEl.textContent = 'Time: 0:00';
+		nextHint.textContent = `${currentTech.name}: press Start, then follow the circle.`;
+		setActiveSeg(-1);
+		srStatus.textContent = '';
+		draw(0);
+	});
+
+	// Initialize
+	updateInfo();
+	buildTimeline();
+	setActiveSeg(-1);
+	resize();
+	draw(0);
+
+	document.addEventListener('astro:before-swap', () => {
+		running = false;
+		cancelAnimationFrame(animId);
+		ro.disconnect();
+	});
+</script>
+
+<style>
+	#breathing-app {
+		display: flex;
+		flex-direction: column;
+		gap: 1.75rem;
+	}
+
+	#technique-nav {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 1rem 1.5rem;
+	}
+
+	:global(.tech-group) {
+		display: flex;
+		flex-direction: column;
+		gap: 0.5rem;
+	}
+
+	:global(.group-label) {
+		font-size: 0.7rem;
+		text-transform: uppercase;
+		letter-spacing: 0.12em;
+		color: var(--text-muted);
+	}
+
+	:global(.chip-row) {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 0.5rem;
+	}
+
+	:global(.tech-btn) {
+		padding: 0.5rem 1rem;
+		background: var(--bg-card);
+		border: 1px solid var(--border-subtle);
+		border-radius: 999px;
+		color: var(--text-secondary);
+		font-family: inherit;
+		font-size: 0.85rem;
+		cursor: pointer;
+		transition: all 0.2s ease;
+	}
+
+	:global(.tech-btn:hover) {
+		border-color: var(--accent);
+		color: var(--text-primary);
+	}
+
+	:global(.tech-btn:focus-visible) {
+		outline: 2px solid var(--accent);
+		outline-offset: 2px;
+	}
+
+	:global(.tech-btn.active) {
+		border-color: var(--accent);
+		color: var(--accent);
+		background: var(--bg-card-hover);
+		box-shadow: 0 0 12px rgba(0, 240, 255, 0.15);
+	}
+
+	:global(.tech-btn:disabled) {
+		opacity: 0.4;
+		cursor: not-allowed;
+	}
+
+	:global(.tech-btn:disabled:hover) {
+		border-color: var(--border-subtle);
+		color: var(--text-secondary);
+		box-shadow: none;
+	}
+
+	#layout {
+		display: grid;
+		grid-template-columns: minmax(0, 1fr) minmax(0, 340px);
+		gap: 2rem;
+		align-items: start;
+	}
+
+	#stage {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		gap: 1.25rem;
+	}
+
+	#visual-area {
+		position: relative;
+		width: 100%;
+		max-width: 380px;
+		aspect-ratio: 1;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+	}
+
+	#breath-canvas {
+		width: 100%;
+		height: 100%;
+		display: block;
+	}
+
+	#next-hint {
+		margin: 0;
+		font-size: 0.9rem;
+		color: var(--text-muted);
+		text-align: center;
+		min-height: 1.4em;
+	}
+
+	#phase-timeline {
+		display: flex;
+		width: 100%;
+		max-width: 380px;
+		gap: 4px;
+	}
+
+	:global(.seg) {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		justify-content: center;
+		padding: 0.4rem 0.2rem;
+		border-radius: 6px;
+		background: var(--bg-card);
+		border: 1px solid var(--border-subtle);
+		font-size: 0.7rem;
+		color: var(--text-muted);
+		transition: all 0.2s ease;
+		min-width: 0;
+	}
+
+	:global(.seg.active) {
+		border-color: var(--seg-color);
+		color: var(--text-primary);
+		background: var(--bg-card-hover);
+		box-shadow: 0 0 10px color-mix(in srgb, var(--seg-color) 35%, transparent);
+	}
+
+	:global(.seg-label) {
+		font-weight: 600;
+		letter-spacing: 0.04em;
+	}
+
+	:global(.seg-dur) {
+		opacity: 0.7;
+	}
+
+	#controls {
+		display: flex;
+		gap: 1rem;
+	}
+
+	#controls button {
+		padding: 0.6rem 2rem;
+		border: 1px solid var(--border-subtle);
+		border-radius: 8px;
+		background: var(--bg-card);
+		color: var(--text-primary);
+		font-family: inherit;
+		font-size: 0.95rem;
+		font-weight: 600;
+		cursor: pointer;
+		transition: all 0.2s ease;
+	}
+
+	#controls button:hover {
+		border-color: var(--accent);
+		box-shadow: 0 0 12px rgba(0, 240, 255, 0.15);
+	}
+
+	#controls button:focus-visible {
+		outline: 2px solid var(--accent);
+		outline-offset: 2px;
+	}
+
+	#btn-start {
+		background: rgba(0, 240, 255, 0.08);
+		border-color: rgba(0, 240, 255, 0.3);
+		color: var(--accent);
+	}
+
+	#btn-start:hover {
+		background: rgba(0, 240, 255, 0.15);
+	}
+
+	#stats {
+		display: flex;
+		gap: 2rem;
+		font-size: 0.85rem;
+		color: var(--text-muted);
+	}
+
+	#guide-card {
+		background: var(--bg-card);
+		border: 1px solid var(--border-subtle);
+		border-radius: 12px;
+		padding: 1.4rem 1.5rem;
+		position: sticky;
+		top: 1.5rem;
+	}
+
+	:global(.guide-head) {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 0.75rem;
+		flex-wrap: wrap;
+		margin-bottom: 0.5rem;
+	}
+
+	:global(.guide-head h3) {
+		margin: 0;
+		font-size: 1.2rem;
+	}
+
+	:global(.goal-badge) {
+		font-size: 0.65rem;
+		text-transform: uppercase;
+		letter-spacing: 0.08em;
+		padding: 0.2rem 0.55rem;
+		border-radius: 999px;
+		background: rgba(0, 240, 255, 0.08);
+		border: 1px solid rgba(0, 240, 255, 0.2);
+		color: var(--accent);
+		white-space: nowrap;
+	}
+
+	:global(#guide-card .tagline) {
+		margin: 0 0 0.75rem;
+		font-size: 0.9rem;
+		color: var(--text-secondary);
+	}
+
+	:global(#guide-card .pattern) {
+		margin: 0 0 1rem;
+		font-size: 0.8rem;
+		color: var(--text-muted);
+		padding-bottom: 0.75rem;
+		border-bottom: 1px solid var(--border-subtle);
+	}
+
+	:global(#guide-card .pattern .cycle) {
+		color: var(--accent);
+		font-weight: 600;
+		margin-left: 0.35rem;
+	}
+
+	:global(#guide-card h4) {
+		font-size: 0.72rem;
+		text-transform: uppercase;
+		letter-spacing: 0.12em;
+		color: var(--accent);
+		margin: 0.9rem 0 0.4rem;
+	}
+
+	:global(#guide-card .steps) {
+		margin: 0;
+		padding-left: 1.1rem;
+	}
+
+	:global(#guide-card .steps li) {
+		font-size: 0.85rem;
+		color: var(--text-secondary);
+		line-height: 1.5;
+		margin-bottom: 0.35rem;
+	}
+
+	:global(#guide-card .evidence) {
+		margin: 0 0 0.5rem;
+		font-size: 0.85rem;
+		color: var(--text-secondary);
+		line-height: 1.55;
+	}
+
+	:global(#guide-card .source) {
+		margin: 0 0 0.75rem;
+		font-size: 0.75rem;
+		color: var(--text-muted);
+	}
+
+	:global(#guide-card .safety) {
+		margin: 0;
+		font-size: 0.8rem;
+		color: var(--text-muted);
+		line-height: 1.5;
+		padding-top: 0.75rem;
+		border-top: 1px solid var(--border-subtle);
+	}
+
+	.sr-only {
+		position: absolute;
+		width: 1px;
+		height: 1px;
+		padding: 0;
+		margin: -1px;
+		overflow: hidden;
+		clip: rect(0, 0, 0, 0);
+		white-space: nowrap;
+		border: 0;
+	}
+
+	@media (max-width: 760px) {
+		#layout {
+			grid-template-columns: 1fr;
+		}
+
+		#guide-card {
+			position: static;
+		}
+	}
+
+	@media (max-width: 600px) {
+		#visual-area {
+			max-width: 300px;
+		}
+
+		:global(.tech-btn) {
+			font-size: 0.78rem;
+			padding: 0.4rem 0.8rem;
+		}
+
+		:global(.seg-dur) {
+			display: none;
+		}
+	}
+
+	@media (prefers-reduced-motion: reduce) {
+		:global(.tech-btn),
+		:global(.seg),
+		#controls button {
+			transition: none;
+		}
+	}
+</style>

@@ -1,0 +1,841 @@
+---
+---
+
+<div id="digit-memory-app">
+	<div id="dm-hud">
+		<div class="dm-hud-item"><span class="dm-hud-label">Round</span><span id="dm-round">0</span></div>
+		<div class="dm-hud-item"><span class="dm-hud-label">Streak</span><span id="dm-streak">0</span></div>
+		<div class="dm-hud-item"><span class="dm-hud-label">Best</span><span id="dm-best">0</span></div>
+		<div class="dm-hud-item"><span class="dm-hud-label">Accuracy</span><span id="dm-accuracy">—</span></div>
+	</div>
+
+	<div id="dm-stage-container">
+		<div id="dm-stage">
+			<div id="dm-intro" class="dm-view">
+				<div class="dm-intro-title">SMS Code Memory</div>
+				<div class="dm-intro-body">A 6-digit code will appear briefly — like an SMS verification.<br />Memorize it, then type it back from memory.</div>
+				<button id="dm-intro-start" class="dm-btn-accent" type="button">Start Training</button>
+			</div>
+
+			<div id="dm-show" class="dm-view" hidden>
+				<div class="dm-phase-label">Memorize this code</div>
+				<div id="dm-show-digits" class="dm-digit-row"></div>
+				<div id="dm-countdown-track"><div id="dm-countdown-fill"></div></div>
+				<div class="dm-time-hint" id="dm-time-hint">Code disappearing in <span id="dm-seconds-left">5</span>s</div>
+			</div>
+
+			<div id="dm-input" class="dm-view" hidden>
+				<div class="dm-phase-label">Enter the code from memory</div>
+				<div id="dm-input-digits" class="dm-digit-row"></div>
+				<div class="dm-input-actions">
+					<button id="dm-submit" class="dm-btn-accent" type="button" disabled>Submit</button>
+				</div>
+			</div>
+
+			<div id="dm-result" class="dm-view" hidden>
+				<div id="dm-result-icon"></div>
+				<div id="dm-result-message"></div>
+				<div id="dm-diff" class="dm-diff-container">
+					<div class="dm-diff-row">
+						<span class="dm-diff-row-label">Yours</span>
+						<div id="dm-diff-yours" class="dm-digit-row"></div>
+					</div>
+					<div class="dm-diff-row">
+						<span class="dm-diff-row-label">Code</span>
+						<div id="dm-diff-correct" class="dm-digit-row"></div>
+					</div>
+				</div>
+				<button id="dm-next" class="dm-btn-accent" type="button">Next Round</button>
+			</div>
+		</div>
+	</div>
+
+	<div id="dm-controls">
+		<div class="dm-controls-row">
+			<div class="dm-slider-group">
+				<label class="dm-slider-label">
+					<span>Display time</span>
+					<span id="dm-duration-val">5.0s</span>
+				</label>
+				<input id="dm-duration" type="range" min="1" max="10" step="0.5" value="5" />
+			</div>
+			<div class="dm-buttons">
+				<button id="dm-restart" type="button" disabled>↺ Reset</button>
+			</div>
+		</div>
+	</div>
+</div>
+
+<script>
+	type Phase = 'idle' | 'show' | 'input' | 'result';
+
+	const CODE_LENGTH = 6;
+	const BEST_KEY = 'digit-memory:best-streak';
+
+	const app = document.getElementById('digit-memory-app')!;
+	const hudRound = document.getElementById('dm-round')!;
+	const hudStreak = document.getElementById('dm-streak')!;
+	const hudBest = document.getElementById('dm-best')!;
+	const hudAccuracy = document.getElementById('dm-accuracy')!;
+
+	const introEl = document.getElementById('dm-intro')!;
+	const showEl = document.getElementById('dm-show')!;
+	const inputEl = document.getElementById('dm-input')!;
+	const resultEl = document.getElementById('dm-result')!;
+
+	const showDigitsEl = document.getElementById('dm-show-digits')!;
+	const inputDigitsEl = document.getElementById('dm-input-digits')!;
+	const diffYoursEl = document.getElementById('dm-diff-yours')!;
+	const diffCorrectEl = document.getElementById('dm-diff-correct')!;
+
+	const countdownFill = document.getElementById('dm-countdown-fill')!;
+	const secondsLeft = document.getElementById('dm-seconds-left')!;
+	const timeHint = document.getElementById('dm-time-hint')!;
+
+	const resultIcon = document.getElementById('dm-result-icon')!;
+	const resultMessage = document.getElementById('dm-result-message')!;
+
+	const introStartBtn = document.getElementById('dm-intro-start') as HTMLButtonElement;
+	const submitBtn = document.getElementById('dm-submit') as HTMLButtonElement;
+	const nextBtn = document.getElementById('dm-next') as HTMLButtonElement;
+	const restartBtn = document.getElementById('dm-restart') as HTMLButtonElement;
+	const durationSlider = document.getElementById('dm-duration') as HTMLInputElement;
+	const durationVal = document.getElementById('dm-duration-val')!;
+
+	const views = [introEl, showEl, inputEl, resultEl];
+
+	let phase: Phase = 'idle';
+	let code = '';
+	let inputs: HTMLInputElement[] = [];
+	let round = 0;
+	let streak = 0;
+	let bestStreak = 0;
+	let totalDigits = 0;
+	let correctDigits = 0;
+	let duration = 5;
+	let countdownTimer: ReturnType<typeof setTimeout> | null = null;
+	let countdownInterval: ReturnType<typeof setInterval> | null = null;
+	let showStart = 0;
+
+	function loadPrefs() {
+		try {
+			const raw = localStorage.getItem(BEST_KEY);
+			if (raw !== null) {
+				const v = parseInt(raw, 10);
+				if (!Number.isNaN(v)) {
+					bestStreak = v;
+					hudBest.textContent = String(v);
+				}
+			}
+		} catch (_) {}
+	}
+
+	function saveBestStreak(v: number) {
+		try { localStorage.setItem(BEST_KEY, String(v)); } catch (_) {}
+	}
+
+	function showView(el: HTMLElement) {
+		for (const v of views) v.hidden = v !== el;
+	}
+
+	function generateCode(): string {
+		let s = '';
+		for (let i = 0; i < CODE_LENGTH; i++) s += Math.floor(Math.random() * 10);
+		return s;
+	}
+
+	function buildShowDigits() {
+		showDigitsEl.innerHTML = '';
+		for (let i = 0; i < CODE_LENGTH; i++) {
+			const box = document.createElement('div');
+			box.className = 'dm-digit-box dm-digit-show';
+			box.textContent = code[i];
+			showDigitsEl.appendChild(box);
+		}
+	}
+
+	function buildInputDigits() {
+		inputDigitsEl.innerHTML = '';
+		inputs = [];
+		for (let i = 0; i < CODE_LENGTH; i++) {
+			const inp = document.createElement('input');
+			inp.type = 'text';
+			inp.inputMode = 'numeric';
+			inp.maxLength = 1;
+			inp.autocomplete = i === 0 ? 'one-time-code' : 'off';
+			inp.className = 'dm-digit-box dm-digit-input';
+			inp.dataset.index = String(i);
+			inp.setAttribute('aria-label', `Digit ${i + 1}`);
+			inputDigitsEl.appendChild(inp);
+			inputs.push(inp);
+
+			inp.addEventListener('input', () => handleInput(inp));
+			inp.addEventListener('keydown', (e) => handleKeydown(e, inp));
+			inp.addEventListener('focus', () => inp.select());
+			inp.addEventListener('paste', handlePaste);
+		}
+	}
+
+	function handleInput(inp: HTMLInputElement) {
+		const val = inp.value;
+		if (val.length > 1) inp.value = val[val.length - 1];
+		inp.value = inp.value.replace(/[^0-9]/g, '').slice(0, 1);
+
+		if (inp.value && inp.dataset.index) {
+			const idx = parseInt(inp.dataset.index, 10);
+			if (idx < CODE_LENGTH - 1) inputs[idx + 1].focus();
+		}
+		updateSubmitState();
+	}
+
+	function handleKeydown(e: KeyboardEvent, inp: HTMLInputElement) {
+		const idx = parseInt(inp.dataset.index!, 10);
+		if (e.key === 'Backspace' && !inp.value && idx > 0) {
+			e.preventDefault();
+			inputs[idx - 1].focus();
+			inputs[idx - 1].value = '';
+			updateSubmitState();
+		}
+		if (e.key === 'ArrowLeft' && idx > 0) {
+			e.preventDefault();
+			inputs[idx - 1].focus();
+		}
+		if (e.key === 'ArrowRight' && idx < CODE_LENGTH - 1) {
+			e.preventDefault();
+			inputs[idx + 1].focus();
+		}
+		if (e.key === 'Enter' && !submitBtn.disabled) {
+			e.preventDefault();
+			submitCode();
+		}
+	}
+
+	function handlePaste(e: ClipboardEvent) {
+		e.preventDefault();
+		const text = (e.clipboardData?.getData('text') || '').replace(/[^0-9]/g, '');
+		for (let i = 0; i < Math.min(text.length, CODE_LENGTH); i++) {
+			inputs[i].value = text[i];
+		}
+		const focusIdx = Math.min(text.length, CODE_LENGTH) - 1;
+		if (focusIdx >= 0) inputs[focusIdx].focus();
+		updateSubmitState();
+	}
+
+	function updateSubmitState() {
+		const filled = inputs.every((inp) => inp.value.length === 1);
+		submitBtn.disabled = !filled;
+	}
+
+	function getUserCode(): string {
+		return inputs.map((inp) => inp.value).join('');
+	}
+
+	function startRound() {
+		round++;
+		code = generateCode();
+		hudRound.textContent = String(round);
+
+		buildShowDigits();
+		phase = 'show';
+		showView(showEl);
+
+		showStart = performance.now();
+		const dur = duration * 1000;
+		secondsLeft.textContent = String(Math.ceil(duration));
+
+		countdownFill.style.transition = 'none';
+		countdownFill.style.width = '100%';
+		void countdownFill.offsetWidth;
+		countdownFill.style.transition = `width ${duration}s linear`;
+		countdownFill.style.width = '0%';
+
+		if (countdownInterval) clearInterval(countdownInterval);
+		countdownInterval = setInterval(() => {
+			const elapsed = (performance.now() - showStart) / 1000;
+			const left = Math.max(0, Math.ceil(duration - elapsed));
+			secondsLeft.textContent = String(left);
+		}, 250);
+
+		if (countdownTimer) clearTimeout(countdownTimer);
+		countdownTimer = setTimeout(() => {
+			if (countdownInterval) clearInterval(countdownInterval);
+			fadeOutCode();
+		}, dur);
+
+		restartBtn.disabled = false;
+	}
+
+	function fadeOutCode() {
+		const boxes = showDigitsEl.querySelectorAll('.dm-digit-show');
+		boxes.forEach((box) => {
+			(box as HTMLElement).classList.add('dm-fade-out');
+		});
+		setTimeout(() => {
+			showDigitsEl.classList.add('dm-blurred');
+		}, 300);
+		setTimeout(() => {
+			transitionToInput();
+		}, 700);
+	}
+
+	function transitionToInput() {
+		showDigitsEl.classList.remove('dm-blurred');
+		const boxes = showDigitsEl.querySelectorAll('.dm-digit-show');
+		boxes.forEach((box) => (box as HTMLElement).classList.remove('dm-fade-out'));
+
+		phase = 'input';
+		buildInputDigits();
+		showView(inputEl);
+		inputs[0].focus();
+		submitBtn.disabled = true;
+	}
+
+	function submitCode() {
+		const userCode = getUserCode();
+		let digitCorrect = 0;
+		for (let i = 0; i < CODE_LENGTH; i++) {
+			if (userCode[i] === code[i]) digitCorrect++;
+		}
+		totalDigits += CODE_LENGTH;
+		correctDigits += digitCorrect;
+		const perfect = digitCorrect === CODE_LENGTH;
+
+		if (perfect) {
+			streak++;
+			if (streak > bestStreak) {
+				bestStreak = streak;
+				saveBestStreak(bestStreak);
+			}
+		} else {
+			streak = 0;
+		}
+
+		hudStreak.textContent = String(streak);
+		hudBest.textContent = String(bestStreak);
+		hudAccuracy.textContent = totalDigits > 0 ? `${Math.round((correctDigits / totalDigits) * 100)}%` : '—';
+
+		phase = 'result';
+		showResult(userCode, digitCorrect, perfect);
+	}
+
+	function showResult(userCode: string, digitCorrect: number, perfect: boolean) {
+		resultIcon.className = `dm-result-icon ${perfect ? 'dm-perfect' : 'dm-imperfect'}`;
+		resultIcon.textContent = perfect ? '✓' : '✗';
+
+		if (perfect) {
+			resultMessage.textContent = 'Perfect recall!';
+			resultMessage.className = 'dm-result-msg dm-perfect-text';
+		} else {
+			resultMessage.textContent = `${digitCorrect}/${CODE_LENGTH} digits correct`;
+			resultMessage.className = 'dm-result-msg dm-imperfect-text';
+		}
+
+		// Build diff: your input row
+		diffYoursEl.innerHTML = '';
+		for (let i = 0; i < CODE_LENGTH; i++) {
+			const box = document.createElement('div');
+			const isCorrect = userCode[i] === code[i];
+			box.className = `dm-digit-box dm-diff-digit ${isCorrect ? 'dm-diff-correct' : 'dm-diff-wrong'}`;
+			box.textContent = userCode[i] || '—';
+			if (!isCorrect) {
+				const sub = document.createElement('span');
+				sub.className = 'dm-diff-hint';
+				sub.textContent = code[i];
+				box.appendChild(sub);
+			}
+			diffYoursEl.appendChild(box);
+		}
+
+		// Build diff: correct code row
+		diffCorrectEl.innerHTML = '';
+		for (let i = 0; i < CODE_LENGTH; i++) {
+			const box = document.createElement('div');
+			const isCorrect = userCode[i] === code[i];
+			box.className = `dm-digit-box dm-diff-digit ${isCorrect ? 'dm-diff-correct' : 'dm-diff-answer-wrong'}`;
+			box.textContent = code[i];
+			diffCorrectEl.appendChild(box);
+		}
+
+		showView(resultEl);
+	}
+
+	function resetAll() {
+		round = 0;
+		streak = 0;
+		totalDigits = 0;
+		correctDigits = 0;
+		hudRound.textContent = '0';
+		hudStreak.textContent = '0';
+		hudAccuracy.textContent = '—';
+		phase = 'idle';
+		showView(introEl);
+		restartBtn.disabled = true;
+		if (countdownTimer) clearTimeout(countdownTimer);
+		if (countdownInterval) clearInterval(countdownInterval);
+	}
+
+	// Event listeners
+	introStartBtn.addEventListener('click', startRound);
+	submitBtn.addEventListener('click', submitCode);
+	nextBtn.addEventListener('click', startRound);
+	restartBtn.addEventListener('click', resetAll);
+
+	durationSlider.addEventListener('input', () => {
+		duration = parseFloat(durationSlider.value);
+		durationVal.textContent = `${duration.toFixed(1)}s`;
+	});
+
+	loadPrefs();
+</script>
+
+<style>
+	#digit-memory-app {
+		display: flex;
+		flex-direction: column;
+		gap: 0;
+		margin: 2rem 0;
+		font-family: inherit;
+	}
+
+	/* HUD */
+	#dm-hud {
+		display: flex;
+		justify-content: space-around;
+		gap: 0.5rem;
+		padding: 1rem 1.25rem;
+		background: var(--bg-card);
+		border: 1px solid var(--border-subtle);
+		border-radius: 12px 12px 0 0;
+		flex-wrap: wrap;
+	}
+
+	.dm-hud-item {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		gap: 0.15rem;
+		font-size: 1.05rem;
+		color: var(--text-primary);
+		font-weight: 700;
+		min-width: 65px;
+	}
+
+	.dm-hud-label {
+		font-size: 0.68rem;
+		font-weight: 600;
+		letter-spacing: 0.12em;
+		text-transform: uppercase;
+		color: var(--accent);
+	}
+
+	/* Stage */
+	#dm-stage-container {
+		background: var(--bg-dark);
+		border-left: 1px solid var(--border-subtle);
+		border-right: 1px solid var(--border-subtle);
+		padding: 2rem 1.25rem 1.5rem;
+	}
+
+	#dm-stage {
+		position: relative;
+		min-height: 240px;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		border-radius: 8px;
+		background: radial-gradient(circle at center, rgba(0, 240, 255, 0.04), transparent 70%);
+		border: 1px dashed rgba(0, 240, 255, 0.08);
+		padding: 1.5rem 1rem;
+	}
+
+	.dm-view {
+		width: 100%;
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		justify-content: center;
+		gap: 1rem;
+		text-align: center;
+		color: var(--text-primary);
+		user-select: none;
+	}
+
+	.dm-view[hidden] { display: none; }
+
+	/* Intro */
+	.dm-intro-title {
+		font-size: 1.5rem;
+		font-weight: 800;
+		letter-spacing: 0.06em;
+		color: var(--accent);
+	}
+
+	.dm-intro-body {
+		font-size: 0.95rem;
+		color: var(--text-secondary);
+		line-height: 1.6;
+	}
+
+	/* Buttons */
+	.dm-btn-accent {
+		padding: 0.6rem 2rem;
+		background: rgba(0, 240, 255, 0.08);
+		border: 1px solid rgba(0, 240, 255, 0.3);
+		border-radius: 8px;
+		color: var(--accent);
+		font-family: inherit;
+		font-size: 0.95rem;
+		font-weight: 600;
+		cursor: pointer;
+		transition: all 0.2s ease;
+	}
+
+	.dm-btn-accent:hover:not(:disabled) {
+		background: rgba(0, 240, 255, 0.15);
+		box-shadow: 0 0 12px rgba(0, 240, 255, 0.15);
+	}
+
+	.dm-btn-accent:disabled {
+		opacity: 0.4;
+		cursor: not-allowed;
+	}
+
+	/* Phase label */
+	.dm-phase-label {
+		font-size: 0.85rem;
+		text-transform: uppercase;
+		letter-spacing: 0.1em;
+		color: var(--text-muted);
+		margin-bottom: 0.25rem;
+	}
+
+	/* Digit boxes — shared */
+	.dm-digit-row {
+		display: flex;
+		gap: 0.6rem;
+		justify-content: center;
+	}
+
+	.dm-digit-box {
+		width: 48px;
+		height: 56px;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+		font-size: 1.6rem;
+		font-weight: 700;
+		border-radius: 8px;
+		background: var(--bg-card);
+		border: 2px solid var(--border-subtle);
+		color: var(--text-primary);
+		position: relative;
+		transition: border-color 0.2s ease, box-shadow 0.2s ease;
+	}
+
+	/* Show-phase digit boxes */
+	.dm-digit-show {
+		color: var(--accent);
+		text-shadow: 0 0 16px rgba(0, 240, 255, 0.4);
+		border-color: rgba(0, 240, 255, 0.3);
+		box-shadow: 0 0 12px rgba(0, 240, 255, 0.1);
+	}
+
+	.dm-digit-show.dm-fade-out {
+		animation: dm-fade-blur 0.6s ease forwards;
+	}
+
+	#dm-show-digits.dm-blurred .dm-digit-show {
+		filter: blur(8px);
+		opacity: 0;
+	}
+
+	@keyframes dm-fade-blur {
+		0% { filter: blur(0); opacity: 1; }
+		100% { filter: blur(8px); opacity: 0; }
+	}
+
+	/* Input-phase digit boxes */
+	.dm-digit-input {
+		width: 48px;
+		height: 56px;
+		text-align: center;
+		padding: 0;
+		outline: none;
+		caret-color: var(--accent);
+		user-select: text;
+	}
+
+	.dm-digit-input:focus {
+		border-color: var(--accent);
+		box-shadow: 0 0 12px rgba(0, 240, 255, 0.2);
+	}
+
+	/* Countdown bar */
+	#dm-countdown-track {
+		width: 100%;
+		max-width: 340px;
+		height: 4px;
+		background: rgba(255, 255, 255, 0.05);
+		border-radius: 2px;
+		overflow: hidden;
+		margin-top: 1rem;
+	}
+
+	#dm-countdown-fill {
+		height: 100%;
+		width: 100%;
+		background: linear-gradient(90deg, rgba(0, 240, 255, 0.3), var(--accent));
+		border-radius: 2px;
+	}
+
+	.dm-time-hint {
+		font-size: 0.8rem;
+		color: var(--text-muted);
+		margin-top: 0.5rem;
+	}
+
+	.dm-time-hint span {
+		color: var(--accent);
+		font-weight: 700;
+	}
+
+	/* Input actions */
+	.dm-input-actions {
+		display: flex;
+		gap: 1rem;
+		margin-top: 0.5rem;
+	}
+
+	/* Result */
+	.dm-result-icon {
+		font-size: 3.2rem;
+		font-weight: 800;
+		line-height: 1;
+	}
+
+	.dm-result-icon.dm-perfect {
+		color: #4dff88;
+		text-shadow: 0 0 20px rgba(77, 255, 136, 0.45);
+	}
+
+	.dm-result-icon.dm-imperfect {
+		color: #ff4d4d;
+		text-shadow: 0 0 20px rgba(255, 77, 77, 0.45);
+	}
+
+	.dm-result-msg {
+		font-size: 1.1rem;
+		font-weight: 700;
+	}
+
+	.dm-perfect-text { color: #4dff88; }
+	.dm-imperfect-text { color: var(--text-secondary); }
+
+	/* Diff container */
+	.dm-diff-container {
+		display: flex;
+		flex-direction: column;
+		gap: 0.75rem;
+		margin: 0.5rem 0;
+	}
+
+	.dm-diff-row {
+		display: flex;
+		align-items: center;
+		gap: 0.6rem;
+	}
+
+	.dm-diff-row-label {
+		font-size: 0.7rem;
+		text-transform: uppercase;
+		letter-spacing: 0.1em;
+		color: var(--text-muted);
+		width: 48px;
+		text-align: right;
+		flex-shrink: 0;
+	}
+
+	.dm-diff-digit {
+		width: 44px;
+		height: 50px;
+		font-size: 1.4rem;
+		flex-direction: column;
+	}
+
+	.dm-diff-correct {
+		border-color: rgba(77, 255, 136, 0.4);
+		color: #4dff88;
+		background: rgba(77, 255, 136, 0.06);
+	}
+
+	.dm-diff-wrong {
+		border-color: rgba(255, 77, 77, 0.5);
+		color: #ff4d4d;
+		background: rgba(255, 77, 77, 0.06);
+	}
+
+	.dm-diff-hint {
+		position: absolute;
+		bottom: 2px;
+		font-size: 0.6rem;
+		color: var(--accent);
+		opacity: 0.8;
+	}
+
+	.dm-diff-answer-wrong {
+		border-color: rgba(255, 77, 77, 0.25);
+		color: var(--text-muted);
+		background: rgba(255, 77, 77, 0.03);
+	}
+
+	/* Controls */
+	#dm-controls {
+		background: var(--bg-card);
+		border: 1px solid var(--border-subtle);
+		border-top: none;
+		border-radius: 0 0 12px 12px;
+		padding: 1rem 1.25rem;
+	}
+
+	.dm-controls-row {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 1rem;
+		flex-wrap: wrap;
+	}
+
+	.dm-slider-group {
+		display: flex;
+		flex-direction: column;
+		gap: 0.35rem;
+		flex: 1;
+		min-width: 180px;
+		max-width: 300px;
+	}
+
+	.dm-slider-label {
+		display: flex;
+		justify-content: space-between;
+		font-size: 0.8rem;
+		color: var(--text-muted);
+	}
+
+	.dm-slider-label span:last-child {
+		color: var(--accent);
+		font-weight: 600;
+	}
+
+	#dm-duration {
+		width: 100%;
+		appearance: none;
+		height: 4px;
+		background: rgba(255, 255, 255, 0.08);
+		border-radius: 2px;
+		outline: none;
+	}
+
+	#dm-duration::-webkit-slider-thumb {
+		appearance: none;
+		width: 16px;
+		height: 16px;
+		border-radius: 50%;
+		background: var(--accent);
+		cursor: pointer;
+		box-shadow: 0 0 8px rgba(0, 240, 255, 0.3);
+	}
+
+	#dm-duration::-moz-range-thumb {
+		width: 16px;
+		height: 16px;
+		border-radius: 50%;
+		background: var(--accent);
+		cursor: pointer;
+		border: none;
+		box-shadow: 0 0 8px rgba(0, 240, 255, 0.3);
+	}
+
+	.dm-buttons {
+		display: flex;
+		gap: 0.75rem;
+	}
+
+	.dm-buttons button {
+		padding: 0.55rem 1rem;
+		background: var(--bg-dark);
+		color: var(--text-secondary);
+		border: 1px solid var(--border-subtle);
+		border-radius: 6px;
+		cursor: pointer;
+		font-family: inherit;
+		font-size: 0.9rem;
+		transition: all 0.2s ease;
+	}
+
+	.dm-buttons button:hover:not(:disabled) {
+		border-color: var(--accent);
+		color: var(--accent);
+	}
+
+	.dm-buttons button:disabled {
+		opacity: 0.45;
+		cursor: not-allowed;
+	}
+
+	/* Mobile */
+	@media (max-width: 500px) {
+		.dm-digit-box {
+			width: 40px;
+			height: 48px;
+			font-size: 1.3rem;
+		}
+
+		.dm-digit-input {
+			width: 40px;
+			height: 48px;
+			font-size: 1.3rem;
+		}
+
+		.dm-digit-row {
+			gap: 0.4rem;
+		}
+
+		.dm-diff-digit {
+			width: 38px;
+			height: 44px;
+			font-size: 1.2rem;
+		}
+
+		.dm-diff-row-label {
+			width: 40px;
+			font-size: 0.6rem;
+		}
+
+		#dm-stage {
+			min-height: 200px;
+			padding: 1rem 0.5rem;
+		}
+
+		.dm-slider-group {
+			min-width: 140px;
+		}
+	}
+
+	@media (prefers-reduced-motion: reduce) {
+		.dm-digit-show.dm-fade-out {
+			animation: none;
+			opacity: 0;
+		}
+
+		#dm-countdown-fill {
+			transition: none;
+		}
+
+		.dm-btn-accent,
+		.dm-digit-input,
+		.dm-digit-box {
+			transition: none;
+		}
+	}
+</style>

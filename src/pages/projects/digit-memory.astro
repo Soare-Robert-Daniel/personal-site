@@ -1,0 +1,116 @@
+---
+import BaseHead from '../../components/BaseHead.astro';
+import Footer from '../../components/Footer.astro';
+import Header from '../../components/Header.astro';
+import DigitMemory from '../../components/DigitMemory.astro';
+---
+
+<!doctype html>
+<html lang="en">
+	<head>
+		<BaseHead title="Digit Memory Trainer | Soare Robert Daniel" description="Train your memory for SMS verification codes. A 6-digit code appears briefly — memorize it and type it back." />
+	</head>
+	<body>
+		<Header />
+		<main>
+			<section>
+				<h1>Digit Memory Trainer</h1>
+				<div class="divider"></div>
+
+				<p class="intro">
+					Train your short-term memory for the 6-digit codes used in SMS authentication, two-factor login, and one-time passwords. A code flashes on screen — memorize it, then type it back from memory. Adjust the display time to increase difficulty as you improve.
+				</p>
+
+				<DigitMemory />
+
+				<div class="divider" style="margin: 3rem 0 2rem;"></div>
+
+				<h2>Tips</h2>
+				<div class="tips-grid">
+					<div class="tip-card">
+						<h3>Chunk it</h3>
+						<p>Don't try to remember six individual digits. Group them: 384-721 becomes <strong>384</strong> and <strong>721</strong> — two chunks of three, much easier to hold.</p>
+					</div>
+					<div class="tip-card">
+						<h3>Rehearse silently</h3>
+						<p>While the code is visible, repeat it to yourself under your breath. Vocal rehearsal loops the information and slows decay.</p>
+					</div>
+					<div class="tip-card">
+						<h3>Attach meaning</h3>
+						<p>If a chunk resembles a year, an age, or a pattern you know, use that. <strong>1998</strong> is easier to remember than 1-9-9-8.</p>
+					</div>
+					<div class="tip-card">
+						<h3>Start slow, ramp up</h3>
+						<p>Begin with a longer display time (8–10 seconds) and shorten it as your accuracy improves. The slider lets you dial in the right challenge level.</p>
+					</div>
+				</div>
+
+				<div class="notice">
+					<strong>Note:</strong> This is a training tool, not a clinical assessment. Short-term digit span varies by person and fatigue. If you find it frustrating, increase the display time — there's no shame in giving your brain more time.
+				</div>
+			</section>
+		</main>
+		<Footer />
+	</body>
+</html>
+
+<style>
+	h1 {
+		margin-bottom: 0.5rem;
+	}
+
+	.intro {
+		font-size: 1.05rem;
+		line-height: 1.7;
+		color: var(--text-secondary);
+		max-width: 640px;
+	}
+
+	.tips-grid {
+		display: grid;
+		grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+		gap: 1rem;
+		margin-bottom: 1.5rem;
+	}
+
+	.tip-card {
+		background: var(--bg-card);
+		border: 1px solid var(--border-subtle);
+		border-radius: 12px;
+		padding: 1.25rem;
+	}
+
+	.tip-card h3 {
+		font-size: 1.1rem;
+		margin: 0 0 0.5rem;
+		color: var(--accent);
+	}
+
+	.tip-card p {
+		font-size: 0.88rem;
+		line-height: 1.55;
+		color: var(--text-secondary);
+		margin: 0;
+	}
+
+	.notice {
+		margin-top: 1.5rem;
+		padding: 1rem 1.25rem;
+		background: var(--bg-card);
+		border: 1px solid var(--border-subtle);
+		border-radius: 8px;
+		font-size: 0.82rem;
+		color: var(--text-muted);
+		line-height: 1.6;
+	}
+
+	.notice strong {
+		color: var(--accent);
+	}
+
+	@media (max-width: 600px) {
+		.tips-grid {
+			grid-template-columns: 1fr;
+		}
+	}
+</style>
