@@ -9,6 +9,7 @@ import Header from '../components/Header.astro';
 type Props = CollectionEntry<'blog'>['data'];
 
 const { title, description, pubDate, updatedDate, heroImage, aiGenerated, aiConversationUrl } = Astro.props;
+const heroAlt = title;
 ---
 
 <html lang="en">
@@ -85,7 +86,7 @@ const { title, description, pubDate, updatedDate, heroImage, aiGenerated, aiConv
 			<article>
 				{heroImage && (
 					<div class="hero-image">
-						<Image width={1020} height={510} src={heroImage} alt="" />
+						<Image width={1020} height={510} src={heroImage} alt={heroAlt} />
 					</div>
 				)}
 				<div class="prose">
@@ -105,8 +106,8 @@ const { title, description, pubDate, updatedDate, heroImage, aiGenerated, aiConv
 							<span class="ai-label">🤖 AI Generated</span>
 						)}
 						<hr />
-						</div>
-						{aiGenerated && (
+					</div>
+					{aiGenerated && (
 						<div class="ai-notice">
 							<strong>🤖 AI-Generated Content</strong>
 							{aiConversationUrl ? (
@@ -115,8 +116,8 @@ const { title, description, pubDate, updatedDate, heroImage, aiGenerated, aiConv
 								<p>This blog post was generated with the assistance of AI.</p>
 							)}
 						</div>
-						)}
-						<slot />
+					)}
+					<slot />
 				</div>
 			</article>
 		</main>

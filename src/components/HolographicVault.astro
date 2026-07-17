@@ -450,6 +450,9 @@
 
 	// ----- Render loop -----
 
+	let animId = 0;
+	let hvResizeObserver: ResizeObserver | null = null;
+
 	function resize() {
 		const w = wrap.clientWidth;
 		const h = wrap.clientHeight;
@@ -460,11 +463,12 @@
 	resize();
 	window.addEventListener('resize', resize);
 	if ('ResizeObserver' in window) {
-		new ResizeObserver(resize).observe(wrap);
+		hvResizeObserver = new ResizeObserver(resize);
+		hvResizeObserver.observe(wrap);
 	}
 
 	function animate() {
-		requestAnimationFrame(animate);
+		animId = requestAnimationFrame(animate);
 
 		if (shuffleAnim) {
 			const now = performance.now();
@@ -493,6 +497,20 @@
 	loadBest();
 	enterIdle();
 	animate();
+
+	document.addEventListener('astro:before-swap', () => {
+		cancelAnimationFrame(animId);
+		window.removeEventListener('resize', resize);
+		if (hvResizeObserver) hvResizeObserver.disconnect();
+		for (const a of artifacts) {
+			a.mesh.geometry.dispose();
+			(a.mesh.material as THREE.Material).dispose();
+			a.halo.geometry.dispose();
+			(a.halo.material as THREE.Material).dispose();
+		}
+		controls.dispose();
+		renderer.dispose();
+	}, { once: true });
 </script>
 
 <style>

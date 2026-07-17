@@ -353,7 +353,7 @@
 	restartBtn.addEventListener('click', () => { startRun(); });
 	deckToggle.addEventListener('change', () => { savePref(DECK_KEY, deckToggle.checked ? '1' : '0'); });
 
-	window.addEventListener('keydown', (e) => {
+	const wcKeydown = (e: KeyboardEvent) => {
 		if (e.repeat) return;
 		if (e.code === 'Space') {
 			e.preventDefault();
@@ -363,7 +363,13 @@
 		const map: Record<string, number> = { '1': 0, '2': 1, '3': 2, '4': 3 };
 		const slot = map[e.key];
 		if (slot !== undefined) handleChoice(slot);
-	});
+	};
+	window.addEventListener('keydown', wcKeydown);
+
+	document.addEventListener('astro:before-swap', () => {
+		phase = 'idle';
+		window.removeEventListener('keydown', wcKeydown);
+	}, { once: true });
 </script>
 
 <style>

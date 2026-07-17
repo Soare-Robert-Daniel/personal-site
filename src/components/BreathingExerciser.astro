@@ -25,174 +25,18 @@
 </div>
 
 <script>
-	type PhaseAction = 'in' | 'hold' | 'out';
-	type Phase = { label: string; duration: number; action: PhaseAction };
-	type Technique = {
-		id: string;
-		name: string;
-		group: string;
-		tagline: string;
-		phases: Phase[];
-		instructions: string[];
-		evidence: string;
-		source: string;
-		safety: string;
-	};
+	import {
+		ACTION_COLORS,
+		ACTION_SHORT,
+		GROUP_LABELS,
+		GROUP_ORDER,
+		TECHNIQUES,
+		type PhaseAction,
+		type Technique,
+	} from '../data/breathing-techniques';
 
-	const ACTION_COLORS: Record<PhaseAction, string> = {
-		in: '#00f0ff',
-		hold: '#f0a000',
-		out: '#00c0a0',
-	};
+	// TECHNIQUES imported from src/data/breathing-techniques.ts
 
-	const ACTION_SHORT: Record<PhaseAction, string> = {
-		in: 'In',
-		hold: 'Hold',
-		out: 'Out',
-	};
-
-	const GROUP_ORDER = ['start', 'stress', 'sleep', 'focus', 'gentle'];
-	const GROUP_LABELS: Record<string, string> = {
-		start: 'Start here',
-		stress: 'Stress relief',
-		sleep: 'Sleep',
-		focus: 'Focus',
-		gentle: 'Gentle / balance',
-	};
-
-	const TECHNIQUES: Technique[] = [
-		{
-			id: 'diaphragmatic',
-			name: 'Belly Breathing',
-			group: 'start',
-			tagline: 'The foundation — breathe low and slow into your belly.',
-			phases: [
-				{ label: 'Breathe in', duration: 4, action: 'in' },
-				{ label: 'Breathe out', duration: 6, action: 'out' },
-			],
-			instructions: [
-				'Sit comfortably or lie down. Rest one hand on your chest and one on your belly.',
-				'Breathe in slowly through your nose so your belly rises — keep your chest still.',
-				'Breathe out gently through pursed lips and feel your belly fall.',
-			],
-			evidence: 'Recommended by Cleveland Clinic and Harvard Health as the first breathing exercise to learn for everyday calm.',
-			source: 'Cleveland Clinic, Harvard Health',
-			safety: 'Gentle and safe for most people. Keep your breaths soft and never strain.',
-		},
-		{
-			id: 'cyclic-sighing',
-			name: 'Cyclic Sighing',
-			group: 'stress',
-			tagline: 'Two inhales and one long exhale — the fastest mood lift.',
-			phases: [
-				{ label: 'Breathe in', duration: 3, action: 'in' },
-				{ label: 'Top-up breath', duration: 1, action: 'in' },
-				{ label: 'Long breathe out', duration: 6, action: 'out' },
-			],
-			instructions: [
-				'Breathe in through your nose to fill most of your lungs.',
-				'Take a second short sip of air on top to fill them completely.',
-				'Let a long, slow breath out through your mouth until your lungs feel empty.',
-			],
-			evidence: 'In a 2023 Stanford study, five minutes a day of cyclic sighing improved mood more than meditation. Even 1–3 breaths can ease a stressful moment.',
-			source: 'Stanford Medicine, Cell Reports Medicine (2023)',
-			safety: 'Keep the top-up breath small and relaxed. Stop if you feel light-headed.',
-		},
-		{
-			id: 'tactical',
-			name: 'Tactical Breathing',
-			group: 'stress',
-			tagline: 'A simple in-and-out count to calm down fast.',
-			phases: [
-				{ label: 'Breathe in', duration: 4, action: 'in' },
-				{ label: 'Breathe out', duration: 4, action: 'out' },
-			],
-			instructions: [
-				'Breathe in slowly through your nose for a count of four.',
-				'Breathe out slowly through your nose for a count of four.',
-				'Keep the rhythm even and let your shoulders relax.',
-			],
-			evidence: 'Taught to military and police because the plain in-and-out count is easy to follow when you are too stressed to think.',
-			source: 'Lt. Col. Dave Grossman, On Combat',
-			safety: 'No breath holds, so it suits most people. Slow down if you feel rushed.',
-		},
-		{
-			id: '478',
-			name: '4-7-8 Breath',
-			group: 'sleep',
-			tagline: 'A long exhale to help you wind down for sleep.',
-			phases: [
-				{ label: 'Breathe in', duration: 4, action: 'in' },
-				{ label: 'Hold gently', duration: 7, action: 'hold' },
-				{ label: 'Breathe out', duration: 8, action: 'out' },
-			],
-			instructions: [
-				'Breathe in quietly through your nose for a count of four.',
-				'Hold your breath gently for a count of seven.',
-				'Breathe out fully through your mouth for a count of eight. Repeat up to four times.',
-			],
-			evidence: 'Developed by Dr. Andrew Weil; Cleveland Clinic suggests it before bed to relax and fall asleep more easily.',
-			source: 'Cleveland Clinic, Dr. Andrew Weil',
-			safety: 'The 7-second hold can feel long — shorten it if needed and avoid straining.',
-		},
-		{
-			id: 'box',
-			name: 'Box Breathing',
-			group: 'focus',
-			tagline: 'Equal counts in a square to steady your focus.',
-			phases: [
-				{ label: 'Breathe in', duration: 4, action: 'in' },
-				{ label: 'Hold gently', duration: 4, action: 'hold' },
-				{ label: 'Breathe out', duration: 4, action: 'out' },
-				{ label: 'Hold gently', duration: 4, action: 'hold' },
-			],
-			instructions: [
-				'Breathe in through your nose for a count of four.',
-				'Hold your breath gently for a count of four.',
-				'Breathe out for a count of four, then hold empty for four. Repeat.',
-			],
-			evidence: 'Used by the US Navy SEALs and first responders; the even 4-4-4-4 count helps steady focus under pressure.',
-			source: 'WebMD, Verywell Health, Cleveland Clinic',
-			safety: 'If the holds feel uncomfortable, shorten them or try Tactical Breathing instead.',
-		},
-		{
-			id: 'coherent',
-			name: 'Coherent Breathing',
-			group: 'gentle',
-			tagline: 'Slow, even breaths at about five per minute.',
-			phases: [
-				{ label: 'Breathe in', duration: 5, action: 'in' },
-				{ label: 'Breathe out', duration: 5, action: 'out' },
-			],
-			instructions: [
-				'Breathe in smoothly through your nose for a count of five.',
-				'Breathe out smoothly for a count of five.',
-				'Keep it gentle and continuous — about six breaths a minute.',
-			],
-			evidence: 'Breathing about five times a minute lines up with your heart’s natural rhythm and raises heart-rate variability, a marker of calm.',
-			source: 'Resonance / HRV breathing research',
-			safety: 'Very gentle. A good everyday option for general balance.',
-		},
-		{
-			id: 'buteyko',
-			name: 'Buteyko Breathing',
-			group: 'gentle',
-			tagline: 'Lighter nasal breathing with a comfortable pause.',
-			phases: [
-				{ label: 'Small breath in', duration: 2, action: 'in' },
-				{ label: 'Easy breath out', duration: 3, action: 'out' },
-				{ label: 'Comfortable pause', duration: 4, action: 'hold' },
-			],
-			instructions: [
-				'Breathe in gently and quietly through your nose — smaller than usual.',
-				'Let an easy, relaxed breath out through your nose.',
-				'Pause comfortably until you feel a mild urge to breathe, then start again.',
-			],
-			evidence: 'Developed by Dr. Konstantin Buteyko; lighter nasal breathing has its strongest evidence as a support for asthma symptoms (Cochrane review).',
-			source: 'Cochrane review (asthma), Buteyko method',
-			safety: 'Keep the pause comfortable, never forced. If you have asthma or a lung condition, check with your clinician first.',
-		},
-	];
 
 	// DOM refs
 	const canvas = document.getElementById('breath-canvas') as HTMLCanvasElement;
@@ -595,26 +439,26 @@
 		gap: 1rem 1.5rem;
 	}
 
-	:global(.tech-group) {
+	#breathing-app :global(.tech-group) {
 		display: flex;
 		flex-direction: column;
 		gap: 0.5rem;
 	}
 
-	:global(.group-label) {
+	#breathing-app :global(.group-label) {
 		font-size: 0.7rem;
 		text-transform: uppercase;
 		letter-spacing: 0.12em;
 		color: var(--text-muted);
 	}
 
-	:global(.chip-row) {
+	#breathing-app :global(.chip-row) {
 		display: flex;
 		flex-wrap: wrap;
 		gap: 0.5rem;
 	}
 
-	:global(.tech-btn) {
+	#breathing-app :global(.tech-btn) {
 		padding: 0.5rem 1rem;
 		background: var(--bg-card);
 		border: 1px solid var(--border-subtle);
@@ -626,29 +470,29 @@
 		transition: all 0.2s ease;
 	}
 
-	:global(.tech-btn:hover) {
+	#breathing-app :global(.tech-btn:hover) {
 		border-color: var(--accent);
 		color: var(--text-primary);
 	}
 
-	:global(.tech-btn:focus-visible) {
+	#breathing-app :global(.tech-btn:focus-visible) {
 		outline: 2px solid var(--accent);
 		outline-offset: 2px;
 	}
 
-	:global(.tech-btn.active) {
+	#breathing-app :global(.tech-btn.active) {
 		border-color: var(--accent);
 		color: var(--accent);
 		background: var(--bg-card-hover);
 		box-shadow: 0 0 12px rgba(0, 240, 255, 0.15);
 	}
 
-	:global(.tech-btn:disabled) {
+	#breathing-app :global(.tech-btn:disabled) {
 		opacity: 0.4;
 		cursor: not-allowed;
 	}
 
-	:global(.tech-btn:disabled:hover) {
+	#breathing-app :global(.tech-btn:disabled:hover) {
 		border-color: var(--border-subtle);
 		color: var(--text-secondary);
 		box-shadow: none;
@@ -699,7 +543,7 @@
 		gap: 4px;
 	}
 
-	:global(.seg) {
+	#breathing-app :global(.seg) {
 		display: flex;
 		flex-direction: column;
 		align-items: center;
@@ -714,19 +558,19 @@
 		min-width: 0;
 	}
 
-	:global(.seg.active) {
+	#breathing-app :global(.seg.active) {
 		border-color: var(--seg-color);
 		color: var(--text-primary);
 		background: var(--bg-card-hover);
 		box-shadow: 0 0 10px color-mix(in srgb, var(--seg-color) 35%, transparent);
 	}
 
-	:global(.seg-label) {
+	#breathing-app :global(.seg-label) {
 		font-weight: 600;
 		letter-spacing: 0.04em;
 	}
 
-	:global(.seg-dur) {
+	#breathing-app :global(.seg-dur) {
 		opacity: 0.7;
 	}
 
@@ -784,7 +628,7 @@
 		top: 1.5rem;
 	}
 
-	:global(.guide-head) {
+	#breathing-app :global(.guide-head) {
 		display: flex;
 		align-items: center;
 		justify-content: space-between;
@@ -793,12 +637,12 @@
 		margin-bottom: 0.5rem;
 	}
 
-	:global(.guide-head h3) {
+	#breathing-app :global(.guide-head h3) {
 		margin: 0;
 		font-size: 1.2rem;
 	}
 
-	:global(.goal-badge) {
+	#breathing-app :global(.goal-badge) {
 		font-size: 0.65rem;
 		text-transform: uppercase;
 		letter-spacing: 0.08em;
@@ -810,13 +654,13 @@
 		white-space: nowrap;
 	}
 
-	:global(#guide-card .tagline) {
+	#breathing-app :global(#guide-card .tagline) {
 		margin: 0 0 0.75rem;
 		font-size: 0.9rem;
 		color: var(--text-secondary);
 	}
 
-	:global(#guide-card .pattern) {
+	#breathing-app :global(#guide-card .pattern) {
 		margin: 0 0 1rem;
 		font-size: 0.8rem;
 		color: var(--text-muted);
@@ -824,13 +668,13 @@
 		border-bottom: 1px solid var(--border-subtle);
 	}
 
-	:global(#guide-card .pattern .cycle) {
+	#breathing-app :global(#guide-card .pattern .cycle) {
 		color: var(--accent);
 		font-weight: 600;
 		margin-left: 0.35rem;
 	}
 
-	:global(#guide-card h4) {
+	#breathing-app :global(#guide-card h4) {
 		font-size: 0.72rem;
 		text-transform: uppercase;
 		letter-spacing: 0.12em;
@@ -838,32 +682,32 @@
 		margin: 0.9rem 0 0.4rem;
 	}
 
-	:global(#guide-card .steps) {
+	#breathing-app :global(#guide-card .steps) {
 		margin: 0;
 		padding-left: 1.1rem;
 	}
 
-	:global(#guide-card .steps li) {
+	#breathing-app :global(#guide-card .steps li) {
 		font-size: 0.85rem;
 		color: var(--text-secondary);
 		line-height: 1.5;
 		margin-bottom: 0.35rem;
 	}
 
-	:global(#guide-card .evidence) {
+	#breathing-app :global(#guide-card .evidence) {
 		margin: 0 0 0.5rem;
 		font-size: 0.85rem;
 		color: var(--text-secondary);
 		line-height: 1.55;
 	}
 
-	:global(#guide-card .source) {
+	#breathing-app :global(#guide-card .source) {
 		margin: 0 0 0.75rem;
 		font-size: 0.75rem;
 		color: var(--text-muted);
 	}
 
-	:global(#guide-card .safety) {
+	#breathing-app :global(#guide-card .safety) {
 		margin: 0;
 		font-size: 0.8rem;
 		color: var(--text-muted);
@@ -899,19 +743,19 @@
 			max-width: 300px;
 		}
 
-		:global(.tech-btn) {
+		#breathing-app :global(.tech-btn) {
 			font-size: 0.78rem;
 			padding: 0.4rem 0.8rem;
 		}
 
-		:global(.seg-dur) {
+		#breathing-app :global(.seg-dur) {
 			display: none;
 		}
 	}
 
 	@media (prefers-reduced-motion: reduce) {
-		:global(.tech-btn),
-		:global(.seg),
+		#breathing-app :global(.tech-btn),
+		#breathing-app :global(.seg),
 		#controls button {
 			transition: none;
 		}

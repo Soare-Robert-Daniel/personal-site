@@ -19,7 +19,7 @@ import { SITE_DESCRIPTION, SITE_TITLE } from '../consts';
 				<GlitchText tag="h1" text="Hello, I'm Robert Soare" />
 				<p class="role">Software Developer</p>
 				<p>
-					Building products for the WordPress ecosystem that help small business owners and freelancers. Currently at <a href="https://themeisle.com/" target="_blank"><strong>Themeisle</strong></a>, serving almost <strong>1 million users</strong>.
+					Building products for the WordPress ecosystem that help small business owners and freelancers. Currently at <a href="https://themeisle.com/" target="_blank" rel="noopener noreferrer"><strong>Themeisle</strong></a>, serving almost <strong>1 million users</strong>.
 				</p>
 			</section>
 
@@ -44,7 +44,7 @@ import { SITE_DESCRIPTION, SITE_TITLE } from '../consts';
 			<section class="section">
 				<h2 class="section-title">Get In Touch</h2>
 				<p>Interested in working together?</p>
-				<a href="https://www.linkedin.com/in/soare-robert-daniel-949974151/" target="_blank" class="cta-button">Let's Connect on LinkedIn</a>
+				<a href="https://www.linkedin.com/in/soare-robert-daniel-949974151/" target="_blank" rel="noopener noreferrer" class="cta-button">Let's Connect on LinkedIn</a>
 			</section>
 		</main>
 		<Footer />
@@ -83,49 +83,3 @@ import { SITE_DESCRIPTION, SITE_TITLE } from '../consts';
 		transform: translateY(-2px);
 	}
 </style>
-
-<script>
-	const glitchChars = '@#$%&*!?/|~^+=_';
-
-	function randomChar() {
-		return glitchChars[Math.floor(Math.random() * glitchChars.length)];
-	}
-
-	function decode(el: Element): Promise<void> {
-		return new Promise((done) => {
-			const text = (el as HTMLElement).dataset.text || '';
-			const len = text.length;
-
-			const resolved = text.split('').map((c) => c === ' ');
-			const display = (el.textContent || '').split('');
-
-			const iterations = 12;
-			let frame = 0;
-			const charDelay = 2;
-
-			function step() {
-				frame++;
-				for (let i = 0; i < len; i++) {
-					if (resolved[i] || text[i] === ' ') continue;
-					if (frame > i * charDelay + iterations) {
-						display[i] = text[i];
-						resolved[i] = true;
-					} else if (frame > i * charDelay) {
-						display[i] = randomChar();
-					}
-				}
-				el.textContent = display.join('');
-				if (resolved.every(Boolean)) { done(); return; }
-				requestAnimationFrame(step);
-			}
-			requestAnimationFrame(step);
-		});
-	}
-
-	const els = document.querySelectorAll('[data-glitch]');
-	(async () => {
-		for (const el of els) {
-			await decode(el);
-		}
-	})();
-</script>

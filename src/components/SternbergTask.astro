@@ -380,7 +380,7 @@
 	restartBtn.addEventListener('click', () => { restartBlock(); });
 	modeSelect.addEventListener('change', () => { mode = modeSelect.value as Mode; });
 
-	window.addEventListener('keydown', (e) => {
+	const sternKeydown = (e: KeyboardEvent) => {
 		if (e.repeat) return;
 		if (e.code === 'Space') {
 			e.preventDefault();
@@ -392,10 +392,17 @@
 		const k = e.key.toLowerCase();
 		if (k === 'j' || e.key === 'ArrowRight') respond('yes');
 		else if (k === 'f' || e.key === 'ArrowLeft') respond('no');
-	});
+	};
+	window.addEventListener('keydown', sternKeydown);
 
 	loadPrefs();
 	showView(introEl);
+
+	document.addEventListener('astro:before-swap', () => {
+		phase = 'idle';
+		trials = [];
+		window.removeEventListener('keydown', sternKeydown);
+	}, { once: true });
 </script>
 
 <style>
@@ -684,11 +691,6 @@
 	#stern-intro kbd {
 		font-size: 0.65rem;
 		padding: 0.05rem 0.35rem;
-		border: 1px solid rgba(255, 255, 255, 0.15);
-		border-radius: 4px;
-		color: rgba(255, 255, 255, 0.5);
-		background: rgba(255, 255, 255, 0.03);
-		font-family: inherit;
 	}
 
 	#stern-controls {

@@ -238,7 +238,7 @@
 		try { localStorage.setItem(CB_KEY, on ? '1' : '0'); } catch (_) {}
 	});
 
-	window.addEventListener('keydown', (e) => {
+	const ssKeydown = (e: KeyboardEvent) => {
 		if (e.repeat) return;
 		if (e.code === 'Space') {
 			e.preventDefault();
@@ -249,7 +249,8 @@
 		const map: Record<string, Color> = { '1': 'red', '2': 'blue', '3': 'green', '4': 'yellow' };
 		const c = map[e.key];
 		if (c) handlePad(c);
-	});
+	};
+	window.addEventListener('keydown', ssKeydown);
 
 	// Populate colorblind glyphs
 	pads.forEach((pad) => {
@@ -261,6 +262,11 @@
 
 	loadPrefs();
 	setPadsDisabled(true);
+
+	document.addEventListener('astro:before-swap', () => {
+		phase = 'idle';
+		window.removeEventListener('keydown', ssKeydown);
+	}, { once: true });
 </script>
 
 <style>
@@ -414,11 +420,6 @@
 	.ss-pad-label kbd {
 		font-size: 0.65rem;
 		padding: 0.05rem 0.35rem;
-		border: 1px solid rgba(255, 255, 255, 0.15);
-		border-radius: 4px;
-		color: rgba(255, 255, 255, 0.5);
-		background: rgba(255, 255, 255, 0.03);
-		font-family: inherit;
 	}
 
 	#ss-controls {

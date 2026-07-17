@@ -386,6 +386,12 @@
 	});
 
 	loadPrefs();
+
+	document.addEventListener('astro:before-swap', () => {
+		phase = 'idle';
+		if (countdownTimer) clearTimeout(countdownTimer);
+		if (countdownInterval) clearInterval(countdownInterval);
+	}, { once: true });
 </script>
 
 <style>

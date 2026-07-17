@@ -1,5 +1,7 @@
 :root {
 	--accent: #00f0ff;
+	--accent-soft: rgba(0, 240, 255, 0.08);
+	--accent-mid: rgba(0, 240, 255, 0.3);
 	--bg-dark: #0a0a0f;
 	--bg-card: #111118;
 	--bg-card-hover: #181822;
@@ -127,6 +129,18 @@ img {
 	max-width: 100%;
 	height: auto;
 	border-radius: 8px;
+}
+
+kbd {
+	display: inline-block;
+	padding: 0.05rem 0.4rem;
+	border: 1px solid var(--border-subtle);
+	border-radius: 4px;
+	color: var(--text-secondary);
+	background: var(--bg-card);
+	font-family: inherit;
+	font-size: 0.85em;
+	line-height: 1.2;
 }
 
 ::selection {

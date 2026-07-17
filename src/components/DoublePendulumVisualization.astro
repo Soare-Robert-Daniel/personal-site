@@ -218,6 +218,7 @@
 		ctx.restore();
 	}
 
+	let animId = 0;
 	function animate() {
 		if (running) {
 			for (let i = 0; i < stepsPerFrame; i++) {
@@ -230,7 +231,7 @@
 			if (trail.length > MAX_TRAIL) trail.shift();
 		}
 		draw();
-		requestAnimationFrame(animate);
+		animId = requestAnimationFrame(animate);
 	}
 
 	function reset() {
@@ -265,6 +266,11 @@
 	resize();
 	reset();
 	animate();
+
+	document.addEventListener('astro:before-swap', () => {
+		cancelAnimationFrame(animId);
+		window.removeEventListener('resize', resize);
+	}, { once: true });
 </script>
 
 <style>

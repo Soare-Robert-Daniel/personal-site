@@ -367,7 +367,7 @@
 	startBtn.addEventListener('click', () => { if (phase === 'idle' || phase === 'done') startBlock(); });
 	restartBtn.addEventListener('click', () => { restartBlock(); });
 
-	window.addEventListener('keydown', (e) => {
+	const pvtKeydown = (e: KeyboardEvent) => {
 		if (e.repeat) return;
 		if (e.code === 'Space') {
 			e.preventDefault();
@@ -375,10 +375,17 @@
 			if (phase === 'done') { restartBlock(); return; }
 			if (phase === 'wait' || phase === 'run') respond();
 		}
-	});
+	};
+	window.addEventListener('keydown', pvtKeydown);
 
 	loadPrefs();
 	showView(introEl);
+
+	document.addEventListener('astro:before-swap', () => {
+		clearTimers();
+		phase = 'idle';
+		window.removeEventListener('keydown', pvtKeydown);
+	}, { once: true });
 </script>
 
 <style>
@@ -696,11 +703,6 @@
 	#pvt-intro kbd {
 		font-size: 0.65rem;
 		padding: 0.05rem 0.35rem;
-		border: 1px solid rgba(255, 255, 255, 0.15);
-		border-radius: 4px;
-		color: rgba(255, 255, 255, 0.5);
-		background: rgba(255, 255, 255, 0.03);
-		font-family: inherit;
 	}
 
 	#pvt-controls {

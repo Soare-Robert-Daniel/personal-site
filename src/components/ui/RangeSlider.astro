@@ -1,0 +1,87 @@
+---
+interface Props {
+	id: string;
+	label: string;
+	value: string;
+	min: number | string;
+	max: number | string;
+	step?: number | string;
+	defaultValue?: number | string;
+	suffix?: string;
+}
+
+const { id, label, value, min, max, step = 1, defaultValue, suffix = '' } = Astro.props;
+const inputId = `${id}-input`;
+const valId = `${id}-val`;
+---
+
+<div class="rng-control">
+	<div class="rng-control-header">
+		<span class="rng-label">{label}</span>
+		<span>
+			<span id={valId}>{value}</span>{suffix}
+		</span>
+	</div>
+	<input
+		type="range"
+		id={inputId}
+		min={min}
+		max={max}
+		step={step}
+		value={defaultValue ?? value}
+		data-val-target={valId}
+	/>
+</div>
+
+<style>
+	.rng-control {
+		display: flex;
+		flex-direction: column;
+		gap: 0.25rem;
+	}
+
+	.rng-control-header {
+		display: flex;
+		justify-content: space-between;
+		align-items: center;
+		font-size: 0.8rem;
+		color: var(--text-secondary);
+	}
+
+	.rng-label {
+		color: var(--accent);
+		font-weight: 700;
+	}
+
+	input[type="range"] {
+		-webkit-appearance: none;
+		appearance: none;
+		width: 100%;
+		height: 4px;
+		background: rgba(255, 255, 255, 0.1);
+		border-radius: 2px;
+		outline: none;
+		cursor: pointer;
+	}
+
+	input[type="range"]::-webkit-slider-thumb {
+		-webkit-appearance: none;
+		appearance: none;
+		width: 14px;
+		height: 14px;
+		border-radius: 50%;
+		background: var(--accent);
+		cursor: pointer;
+		box-shadow: 0 0 8px var(--glow);
+	}
+
+	input[type="range"]::-moz-range-thumb {
+		width: 14px;
+		height: 14px;
+		border-radius: 50%;
+		background: var(--accent);
+		cursor: pointer;
+		border: none;
+		box-shadow: 0 0 8px var(--glow);
+	}
+</style>

@@ -1,0 +1,124 @@
+---
+import BaseHead from '../../components/BaseHead.astro';
+import Footer from '../../components/Footer.astro';
+import Header from '../../components/Header.astro';
+import SoundSignatureLab from '../../components/SoundSignatureLab.astro';
+---
+
+<!doctype html>
+<html lang="en">
+	<head>
+		<BaseHead title="Sound Signature Lab | Soare Robert Daniel" description="Explore common headphone and IEM sound signatures, then test your gear with tones, noise, and a full frequency sweep." />
+	</head>
+	<body>
+		<Header />
+		<main>
+			<section>
+				<p class="eyebrow">Headphone and IEM reference tool</p>
+				<h1>Sound Signature Lab</h1>
+				<div class="divider"></div>
+				<p class="intro">See how neutral, bright, dark, warm, cold, and V-shaped tunings distribute energy across the audible range. Then use the generator to check for channel imbalance, rattles, peaks, dips, or missing frequencies in your headphones and IEMs.</p>
+
+				<SoundSignatureLab />
+
+				<div class="guide">
+					<div>
+						<h2>How to use it</h2>
+						<ol>
+							<li>Pick a curve to compare the vocabulary people use when describing a headphone's tuning.</li>
+							<li>Use a quiet pure tone to investigate a specific frequency, or run a sweep to locate a rattle, resonance, or dropout.</li>
+							<li>Use noise to listen for broad tonal balance. These reference curves are illustrative, not measurements of a specific product.</li>
+						</ol>
+					</div>
+					<div class="frequency-guide">
+						<h2>Quick frequency guide</h2>
+						<p><strong>20–60 Hz:</strong> rumble and sub-bass. <strong>60–250 Hz:</strong> punch and warmth.</p>
+						<p><strong>250 Hz–2 kHz:</strong> body, vocals, and instruments. <strong>2–6 kHz:</strong> clarity, attack, and possible harshness.</p>
+						<p><strong>6–20 kHz:</strong> sparkle and air. Hearing above 15 kHz varies greatly by person and age.</p>
+					</div>
+				</div>
+			</section>
+		</main>
+		<Footer />
+	</body>
+</html>
+
+<style>
+	:global(main) {
+		width: min(1180px, calc(100% - 2rem));
+		max-width: none;
+		padding-inline: 0;
+	}
+
+	.eyebrow {
+		margin: 0 0 0.4rem;
+		color: var(--accent);
+		font-size: 0.72rem;
+		font-weight: 700;
+		letter-spacing: 0.13em;
+		text-transform: uppercase;
+	}
+
+	h1 {
+		margin-bottom: 0.5rem;
+	}
+
+	.intro {
+		max-width: 760px;
+		margin-bottom: 2rem;
+		color: var(--text-secondary);
+		font-size: 1.05rem;
+		line-height: 1.7;
+	}
+
+	.guide {
+		display: grid;
+		grid-template-columns: repeat(2, minmax(0, 1fr));
+		gap: 1rem;
+		margin-top: 1rem;
+	}
+
+	.guide > div {
+		padding: 1.25rem;
+		background: var(--bg-card);
+		border: 1px solid var(--border-subtle);
+		border-radius: 12px;
+	}
+
+	.guide h2 {
+		margin: 0 0 0.75rem;
+		font-size: 1rem;
+	}
+
+	.guide ol {
+		margin: 0;
+		padding-left: 1.2rem;
+	}
+
+	.guide li,
+	.frequency-guide p {
+		margin: 0 0 0.55rem;
+		color: var(--text-secondary);
+		font-size: 0.85rem;
+		line-height: 1.55;
+	}
+
+	.frequency-guide p:last-child,
+	.guide li:last-child {
+		margin-bottom: 0;
+	}
+
+	.frequency-guide strong {
+		color: var(--accent);
+	}
+
+	@media (max-width: 680px) {
+		:global(main) {
+			width: min(100% - 1.5rem, 1180px);
+		}
+
+		.guide {
+			grid-template-columns: 1fr;
+		}
+	}
+</style>

@@ -19,6 +19,9 @@ Astro 5 static blog (site: robertsoare.xyz) using MDX and sitemap integrations. 
 - `src/styles/global.css` — Global styles with CSS custom properties (dark theme)
 - `src/consts.ts` — Site-wide constants (SITE_TITLE, SITE_DESCRIPTION)
 
+## Tooling
+- For any file search or grep in the current git-indexed directory, use fff tools.
+
 ## Code Style
 - TypeScript with `strict` + `strictNullChecks`; Astro component frontmatter in `---` fences
 - Imports use relative paths (`../consts`, `./HeaderLink.astro`)

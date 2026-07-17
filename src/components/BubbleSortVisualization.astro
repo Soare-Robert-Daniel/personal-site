@@ -78,10 +78,7 @@
 			return '#00ff88';
 		}
 		// Currently comparing pair
-		if (running && !sorted && index === posIndex) {
-			return swapping ? '#ff6060' : '#ffcc00';
-		}
-		if (running && !sorted && index === posIndex + 1) {
+		if (running && !sorted && (index === posIndex || index === posIndex + 1)) {
 			return swapping ? '#ff6060' : '#ffcc00';
 		}
 		// Default cyan with slight opacity variation
@@ -217,6 +214,7 @@
 		}
 	}
 
+	let animId = 0;
 	function animate() {
 		frameCount++;
 
@@ -229,7 +227,7 @@
 		}
 
 		draw();
-		requestAnimationFrame(animate);
+		animId = requestAnimationFrame(animate);
 	}
 
 	function reset() {
@@ -266,6 +264,11 @@
 	resize();
 	reset();
 	animate();
+
+	document.addEventListener('astro:before-swap', () => {
+		cancelAnimationFrame(animId);
+		window.removeEventListener('resize', resize);
+	}, { once: true });
 </script>
 
 <style>

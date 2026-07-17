@@ -1,0 +1,1109 @@
+<div id="sound-signature-lab">
+	<section class="response-panel" aria-labelledby="signature-heading">
+		<div class="panel-heading">
+			<div>
+				<p class="eyebrow">Original signal → transformed sound</p>
+				<h2 id="signature-heading">Sound signature matrix</h2>
+			</div>
+			<p id="signature-summary" class="summary" aria-live="polite"></p>
+		</div>
+		<div class="chart-wrap">
+			<canvas id="response-chart" role="img" aria-label="Detailed comparison of the original flat signal and the selected transformed response"></canvas>
+		</div>
+		<div class="frequency-legend" aria-hidden="true">
+			<span>Sub-bass<br />20–60 Hz</span>
+			<span>Bass<br />60–250 Hz</span>
+			<span>Mids<br />250 Hz–2 kHz</span>
+			<span>Presence<br />2–6 kHz</span>
+			<span>Air<br />6–20 kHz</span>
+		</div>
+
+		<p class="picker-label">Pick a signature to transform the playing music. Each tile shows the unprocessed source beside that signature's processed result.</p>
+		<div id="signature-tiles" class="signature-tiles" role="group" aria-label="Choose a sound signature"></div>
+
+		<div class="controls">
+			<div class="preset-row" role="group" aria-label="Music preset">
+				<span class="control-label">Music</span>
+				<button class="preset-button mode-button active" type="button" data-preset="edm" aria-pressed="true">EDM</button>
+				<button class="preset-button mode-button" type="button" data-preset="lofi" aria-pressed="false">Lo-fi</button>
+				<button class="preset-button mode-button" type="button" data-preset="ambient" aria-pressed="false">Ambient</button>
+				<button class="preset-button mode-button" type="button" data-preset="arp" aria-pressed="false">Arpeggio</button>
+			</div>
+			<div class="level-row">
+				<div class="label-row">
+					<label for="volume">Safety level</label>
+					<output id="volume-value" for="volume">8%</output>
+				</div>
+				<input id="volume" type="range" min="0" max="20" value="8" step="1" />
+			</div>
+			<div class="action-row">
+				<button id="toggle-signal" type="button">Start listening</button>
+			</div>
+		</div>
+		<p id="playback-status" class="playback-status" aria-live="polite">Ready. Pick a signature and press Start listening.</p>
+		<p class="safety-note"><strong>Hearing safety:</strong> begin at the minimum volume. Keep this a gentle listening test, then stop if you hear discomfort or ringing.</p>
+	</section>
+</div>
+
+<script>
+	type Signature = {
+		id: string;
+		name: string;
+		type: string;
+		description: string;
+		color: string;
+		eq: [number, number, number, number, number];
+		eqSummary: string;
+	};
+
+	type MusicPreset = {
+		id: string;
+		name: string;
+		tempo: number;
+		chordType: OscillatorType;
+		bass: number[];
+		melody: number[];
+	};
+
+	const signatures: Signature[] = [
+		{ id: 'neutral', name: 'Neutral', type: 'Flat reference', description: 'The original flat reference. No tonal transformation is applied.', color: '#70e6c4', eq: [0, 0, 0, 0, 0], eqSummary: 'Bass 0 · Mids 0 · Treble 0' },
+		{ id: 'bright', name: 'Bright', type: 'Strong treble boost', description: 'Clearly lifts presence and sparkle while keeping bass close to the original.', color: '#f5d06f', eq: [0, -1, 0, 6, 9], eqSummary: 'Bass 0 · Mids 0 · Treble +9' },
+		{ id: 'dark', name: 'Dark', type: 'Strong treble cut', description: 'Clearly softens presence and air for a darker, relaxed result.', color: '#8c9cb8', eq: [2, 2, 0, -5, -10], eqSummary: 'Bass +2 · Mids 0 · Treble −10' },
+		{ id: 'warm', name: 'Warm', type: 'Strong bass lift', description: 'Clearly lifts bass and lower mids, then rolls back upper treble.', color: '#e89565', eq: [7, 6, 2, -3, -5], eqSummary: 'Bass +7 · Mids +2 · Treble −5' },
+		{ id: 'cold', name: 'Cold', type: 'Strong lean / cold', description: 'Clearly removes low-end weight and brings forward clarity and edge.', color: '#70c8ee', eq: [-7, -5, 0, 6, 6], eqSummary: 'Bass −7 · Mids 0 · Treble +6' },
+		{ id: 'v-shaped', name: 'V-shaped', type: 'Extreme V', description: 'Strongly raises bass and treble while pushing the middle behind the mix.', color: '#d878df', eq: [10, 4, -7, 7, 10], eqSummary: 'Bass +10 · Mids −7 · Treble +10' },
+	];
+	const musicPresets: MusicPreset[] = [
+		{ id: 'edm', name: 'EDM', tempo: 128, chordType: 'sawtooth', bass: [55, 55, 55, 55, 65.41, 65.41, 65.41, 65.41, 49, 49, 49, 49, 73.42, 73.42, 73.42, 73.42], melody: [659.26, 659.26, 783.99, 880, 659.26, 587.33, 659.26, 783.99, 880, 880, 1046.5, 1174.66, 1046.5, 880, 783.99, 659.26] },
+		{ id: 'lofi', name: 'Lo-fi', tempo: 82, chordType: 'triangle', bass: [73.42, 73.42, 73.42, 82.41, 61.74, 61.74, 61.74, 73.42, 65.41, 65.41, 65.41, 73.42, 55, 55, 61.74, 65.41], melody: [293.66, 329.63, 369.99, 440, 369.99, 329.63, 293.66, 261.63, 329.63, 369.99, 440, 493.88, 440, 369.99, 329.63, 293.66] },
+		{ id: 'ambient', name: 'Ambient', tempo: 68, chordType: 'sine', bass: [49, 49, 55, 55, 61.74, 61.74, 55, 55, 49, 49, 55, 55, 65.41, 65.41, 61.74, 55], melody: [440, 493.88, 587.33, 659.26, 739.99, 659.26, 587.33, 493.88, 369.99, 440, 493.88, 587.33, 659.26, 587.33, 493.88, 440] },
+		{ id: 'arp', name: 'Arpeggio', tempo: 112, chordType: 'square', bass: [82.41, 82.41, 92.5, 82.41, 73.42, 73.42, 82.41, 73.42, 65.41, 65.41, 73.42, 65.41, 61.74, 61.74, 73.42, 61.74], melody: [261.63, 329.63, 392, 523.25, 293.66, 369.99, 440, 587.33, 220, 293.66, 369.99, 440, 246.94, 329.63, 392, 493.88] },
+	];
+
+	const canvas = document.getElementById('response-chart') as HTMLCanvasElement;
+	const chartContext = canvas.getContext('2d')!;
+	const tileGrid = document.getElementById('signature-tiles')!;
+	const summary = document.getElementById('signature-summary')!;
+	const volume = document.getElementById('volume') as HTMLInputElement;
+	const volumeValue = document.getElementById('volume-value') as HTMLOutputElement;
+	const toggleButton = document.getElementById('toggle-signal') as HTMLButtonElement;
+	const playbackStatus = document.getElementById('playback-status')!;
+	const presetButtons = Array.from(document.querySelectorAll<HTMLButtonElement>('.preset-button'));
+
+	let selected = signatures[0];
+	let audioContext: AudioContext | null = null;
+	let masterGain: GainNode | null = null;
+	let eqInput: GainNode | null = null;
+	let eqFilters: BiquadFilterNode[] = [];
+	let rawAnalyser: AnalyserNode | null = null;
+	let scheduledSources: AudioScheduledSourceNode[] = [];
+	let sequenceTimer = 0;
+	let sequenceIndex = 0;
+	let monitorFrame = 0;
+	let monitorRunning = false;
+	let activePreset = musicPresets[0];
+	const signalCanvases = new Map<string, HTMLCanvasElement>();
+	const curveCanvases = new Map<string, HTMLCanvasElement>();
+	let liveBarFreqs = getBarFrequencies(48000);
+	const eqMultCache = new Map<string, number[]>();
+
+	function drawChart() {
+		const rect = canvas.getBoundingClientRect();
+		const dpr = window.devicePixelRatio || 1;
+		canvas.width = Math.max(1, Math.floor(rect.width * dpr));
+		canvas.height = Math.max(1, Math.floor(rect.height * dpr));
+		chartContext.setTransform(dpr, 0, 0, dpr, 0, 0);
+		const width = rect.width;
+		const height = rect.height;
+		const padding = { top: 28, right: 18, bottom: 30, left: 38 };
+		const graphWidth = width - padding.left - padding.right;
+		const graphHeight = height - padding.top - padding.bottom;
+		const centerY = padding.top + graphHeight / 2;
+		const { frequencies, decibels } = computeFilterResponse(selected.eq, 160);
+		const maxAbsDb = Math.max(...decibels.map((value) => Math.abs(value)));
+		const axisLimit = Math.max(12, Math.ceil((maxAbsDb + 2) / 6) * 6);
+		const tickStep = axisLimit > 18 ? 12 : 6;
+
+		chartContext.clearRect(0, 0, width, height);
+		chartContext.font = '11px ui-monospace, SFMono-Regular, Menlo, monospace';
+		chartContext.textAlign = 'right';
+		chartContext.textBaseline = 'middle';
+		for (let db = -axisLimit; db <= axisLimit; db += tickStep) {
+			const y = centerY - (db / axisLimit) * (graphHeight / 2);
+			chartContext.strokeStyle = db === 0 ? 'rgba(237, 243, 255, 0.32)' : 'rgba(237, 243, 255, 0.1)';
+			chartContext.lineWidth = db === 0 ? 1.5 : 1;
+			chartContext.beginPath();
+			chartContext.moveTo(padding.left, y);
+			chartContext.lineTo(width - padding.right, y);
+			chartContext.stroke();
+			chartContext.fillStyle = 'rgba(237, 243, 255, 0.55)';
+			chartContext.fillText(`${db > 0 ? '+' : ''}${db}`, padding.left - 8, y);
+		}
+
+		const minLog = Math.log10(20);
+		const maxLog = Math.log10(20000);
+		const xFor = (frequency: number) => padding.left + ((Math.log10(frequency) - minLog) / (maxLog - minLog)) * graphWidth;
+		const yFor = (point: number) => centerY - (point / axisLimit) * (graphHeight / 2);
+		const gradient = chartContext.createLinearGradient(0, padding.top, 0, height - padding.bottom);
+		gradient.addColorStop(0, `${selected.color}55`);
+		gradient.addColorStop(1, `${selected.color}00`);
+
+		chartContext.beginPath();
+		chartContext.moveTo(padding.left, centerY);
+		chartContext.lineTo(width - padding.right, centerY);
+		chartContext.strokeStyle = 'rgba(237, 243, 255, 0.25)';
+		chartContext.setLineDash([6, 4]);
+		chartContext.lineWidth = 1.5;
+		chartContext.stroke();
+		chartContext.setLineDash([]);
+
+		chartContext.beginPath();
+		decibels.forEach((point, index) => {
+			const x = xFor(frequencies[index]);
+			const y = yFor(point);
+			if (index === 0) chartContext.moveTo(x, y);
+			else chartContext.lineTo(x, y);
+		});
+		chartContext.lineTo(xFor(frequencies[frequencies.length - 1]), centerY);
+		chartContext.lineTo(xFor(frequencies[0]), centerY);
+		chartContext.closePath();
+		chartContext.fillStyle = gradient;
+		chartContext.fill();
+
+		chartContext.beginPath();
+		decibels.forEach((point, index) => {
+			const x = xFor(frequencies[index]);
+			const y = yFor(point);
+			if (index === 0) chartContext.moveTo(x, y);
+			else chartContext.lineTo(x, y);
+		});
+		chartContext.strokeStyle = selected.color;
+		chartContext.lineWidth = 3;
+		chartContext.lineJoin = 'round';
+		chartContext.lineCap = 'round';
+		chartContext.shadowColor = selected.color;
+		chartContext.shadowBlur = 14;
+		chartContext.stroke();
+		chartContext.shadowBlur = 0;
+		[20, 100, 1000, 10000, 20000].forEach((frequency) => {
+			const point = interpDb(frequencies, decibels, frequency);
+			chartContext.beginPath();
+			chartContext.arc(xFor(frequency), yFor(point), 3.5, 0, Math.PI * 2);
+			chartContext.fillStyle = selected.color;
+			chartContext.fill();
+		});
+		chartContext.fillStyle = 'rgba(237, 243, 255, 0.6)';
+		chartContext.textAlign = 'left';
+		chartContext.textBaseline = 'top';
+		chartContext.fillText('dB', padding.left, 7);
+	}
+
+	let analysisContext: AudioContext | null = null;
+
+	function getAnalysisContext() {
+		analysisContext ??= new AudioContext({ sampleRate: 48000 });
+		return analysisContext;
+	}
+
+	function computeFilterResponse(eq: [number, number, number, number, number], sampleCount = 100) {
+		const context = getAnalysisContext();
+		const filterSpecs: Array<[BiquadFilterType, number, number]> = [
+			['lowshelf', 100, 1],
+			['peaking', 250, 0.9],
+			['peaking', 1000, 1],
+			['peaking', 3500, 1],
+			['highshelf', 8000, 1],
+		];
+		const filters = filterSpecs.map(([type, frequency, q], index) => {
+			const filter = context.createBiquadFilter();
+			filter.type = type;
+			filter.frequency.value = frequency;
+			filter.Q.value = q;
+			filter.gain.value = eq[index];
+			return filter;
+		});
+		const frequencies = new Float32Array(sampleCount);
+		const minLog = Math.log10(20);
+		const maxLog = Math.log10(20000);
+		for (let i = 0; i < frequencies.length; i++) {
+			frequencies[i] = 10 ** (minLog + (i / (frequencies.length - 1)) * (maxLog - minLog));
+		}
+		const decibels = new Float32Array(frequencies.length);
+		filters.forEach((filter) => {
+			const magnitudes = new Float32Array(frequencies.length);
+			filter.getFrequencyResponse(frequencies, magnitudes, new Float32Array(frequencies.length));
+			magnitudes.forEach((magnitude, index) => {
+				decibels[index] += 20 * Math.log10(magnitude);
+			});
+		});
+		return { frequencies: Array.from(frequencies), decibels: Array.from(decibels) };
+	}
+
+	function drawMiniChart(miniCanvas: HTMLCanvasElement, signature: Signature) {
+		const rect = miniCanvas.getBoundingClientRect();
+		const width = Math.max(80, rect.width);
+		const height = 48;
+		const dpr = window.devicePixelRatio || 1;
+		miniCanvas.width = Math.max(1, Math.floor(width * dpr));
+		miniCanvas.height = Math.max(1, Math.floor(height * dpr));
+		const context = miniCanvas.getContext('2d')!;
+		context.setTransform(dpr, 0, 0, dpr, 0, 0);
+		const { decibels } = computeFilterResponse(signature.eq);
+		const baseline = height / 2;
+		const dbScale = Math.max(12, Math.ceil((Math.max(...decibels.map((value) => Math.abs(value))) + 2) / 6) * 6);
+		context.clearRect(0, 0, width, height);
+		context.fillStyle = 'rgba(10, 15, 28, 0.6)';
+		context.fillRect(0, 0, width, height);
+		context.strokeStyle = 'rgba(170, 182, 206, 0.35)';
+		context.setLineDash([3, 3]);
+		context.lineWidth = 1;
+		context.beginPath();
+		context.moveTo(0, baseline);
+		context.lineTo(width, baseline);
+		context.stroke();
+		context.setLineDash([]);
+
+		function drawCurve(stroke: string, fill: string, data: number[], lineWidth: number, glow = false) {
+			context.beginPath();
+			data.forEach((db, index) => {
+				const x = (index / (data.length - 1)) * width;
+				const y = baseline - (db / dbScale) * (height / 2);
+				if (index === 0) context.moveTo(x, y);
+				else context.lineTo(x, y);
+			});
+			context.strokeStyle = stroke;
+			context.lineWidth = lineWidth;
+			context.lineJoin = 'round';
+			context.lineCap = 'round';
+			if (glow) {
+				context.shadowColor = stroke;
+				context.shadowBlur = 10;
+			}
+			context.stroke();
+			context.shadowBlur = 0;
+			context.lineTo(width, baseline);
+			context.lineTo(0, baseline);
+			context.closePath();
+			const gradient = context.createLinearGradient(0, 0, 0, height);
+			gradient.addColorStop(0, fill);
+			gradient.addColorStop(1, 'transparent');
+			context.fillStyle = gradient;
+			context.fill();
+		}
+
+		const flatLine = new Array(decibels.length).fill(0);
+		drawCurve('rgba(170, 182, 206, 0.5)', 'rgba(170, 182, 206, 0.08)', flatLine, 1.5);
+		drawCurve(signature.color, `${signature.color}40`, decibels, 2.5, true);
+	}
+
+	function interpDb(frequencies: number[], decibels: number[], frequency: number) {
+		if (frequency <= frequencies[0]) return decibels[0];
+		if (frequency >= frequencies[frequencies.length - 1]) return decibels[decibels.length - 1];
+		for (let i = 1; i < frequencies.length; i++) {
+			if (frequencies[i] >= frequency) {
+				const t = (frequency - frequencies[i - 1]) / (frequencies[i] - frequencies[i - 1]);
+				return decibels[i - 1] + t * (decibels[i] - decibels[i - 1]);
+			}
+		}
+		return decibels[decibels.length - 1];
+	}
+
+	function eqMultipliers(signature: Signature) {
+		const cached = eqMultCache.get(signature.id);
+		if (cached) return cached;
+		const { frequencies, decibels } = computeFilterResponse(signature.eq);
+		const mult = liveBarFreqs.map((frequency) => 10 ** (interpDb(frequencies, decibels, frequency) / 20));
+		eqMultCache.set(signature.id, mult);
+		return mult;
+	}
+
+	function drawSpectrumBars(target: HTMLCanvasElement, sourceBars: number[], processedBars: number[], color: string, live: boolean) {
+		const rect = target.getBoundingClientRect();
+		const dpr = window.devicePixelRatio || 1;
+		if (target.width !== Math.floor(rect.width * dpr) || target.height !== Math.floor(rect.height * dpr)) {
+			target.width = Math.max(1, Math.floor(rect.width * dpr));
+			target.height = Math.max(1, Math.floor(rect.height * dpr));
+		}
+		const context = target.getContext('2d')!;
+		context.setTransform(dpr, 0, 0, dpr, 0, 0);
+		const width = rect.width;
+		const height = rect.height;
+		context.clearRect(0, 0, width, height);
+		context.fillStyle = 'rgba(10, 15, 28, 0.5)';
+		context.fillRect(0, 0, width, height);
+
+		const groupWidth = width / sourceBars.length;
+		const gap = Math.min(2, groupWidth * 0.14);
+		const barWidth = Math.max(1, (groupWidth - gap * 2) / 2);
+		const drawBar = (value: number, x: number, fill: string) => {
+			const barHeight = value * (height - 8);
+			const y = height - 4 - barHeight;
+			const gradient = context.createLinearGradient(0, height, 0, y);
+			gradient.addColorStop(0, `${fill}20`);
+			gradient.addColorStop(1, live ? fill : `${fill}88`);
+			context.fillStyle = gradient;
+			context.fillRect(x, y, barWidth, barHeight);
+		};
+
+		sourceBars.forEach((value, index) => {
+			const groupX = index * groupWidth + gap / 2;
+			drawBar(value, groupX, '#aab6ce');
+			drawBar(processedBars[index] ?? value, groupX + barWidth + gap, color);
+		});
+	}
+
+	function computeSourceSpectrumBars() {
+		const barCount = 32;
+		return Array.from({ length: barCount }, (_, index) => {
+			const position = index / (barCount - 1);
+			const contour = 0.36 + 0.35 * Math.sin(position * Math.PI * 0.9) ** 2;
+			const pulse = 0.1 * Math.sin(index * 1.7) ** 2;
+			return Math.min(0.92, contour + pulse);
+		});
+	}
+
+	function computeRawSpectrumBars() {
+		if (!rawAnalyser || !audioContext) return null;
+		const data = new Uint8Array(rawAnalyser.frequencyBinCount);
+		rawAnalyser.getByteFrequencyData(data);
+		const nyquist = audioContext.sampleRate / 2;
+		const barCount = 32;
+		return Array.from({ length: barCount }, (_, index) => {
+			const low = (index / barCount) ** 2 * nyquist;
+			const high = ((index + 1) / barCount) ** 2 * nyquist;
+			let sum = 0;
+			let count = 0;
+			for (let i = 0; i < data.length; i++) {
+				const frequency = (i / data.length) * nyquist;
+				if (frequency >= low && frequency < high) {
+					sum += data[i];
+					count++;
+				}
+			}
+			return count ? sum / count / 255 : 0;
+		});
+	}
+
+	function getBarFrequencies(sampleRate: number) {
+		const nyquist = sampleRate / 2;
+		return Array.from({ length: 32 }, (_, index) => {
+			const low = (index / 32) ** 2 * nyquist;
+			const high = ((index + 1) / 32) ** 2 * nyquist;
+			return (low + high) / 2;
+		});
+	}
+
+	function computeLiveShapedBars(signature: Signature, rawBars: number[]) {
+		const mult = eqMultipliers(signature);
+		return rawBars.map((value, index) => Math.min(1, Math.max(0.03, value * (mult[index] ?? 1))));
+	}
+
+	function updateSignalCanvases() {
+		const rawBars = monitorRunning ? computeRawSpectrumBars() : null;
+		const sourceBars = rawBars ?? computeSourceSpectrumBars();
+		signatures.forEach((signature) => {
+			const target = signalCanvases.get(signature.id);
+			if (!target) return;
+			const bars = rawBars ? computeLiveShapedBars(signature, rawBars) : computeLiveShapedBars(signature, sourceBars);
+			drawSpectrumBars(target, sourceBars, bars, signature.color, !!rawBars);
+		});
+		if (monitorRunning) monitorFrame = requestAnimationFrame(updateSignalCanvases);
+	}
+
+	function selectSignature(signature: Signature) {
+		selected = signature;
+		summary.textContent = `${signature.type}. ${signature.description}`;
+		tileGrid.querySelectorAll<HTMLElement>('.sig-tile').forEach((tile) => {
+			const active = tile.dataset.signature === signature.id;
+			tile.classList.toggle('active', active);
+			tile.setAttribute('aria-pressed', String(active));
+		});
+		applySignatureEq(signature);
+		drawChart();
+		if (!monitorRunning) {
+			updateSignalCanvases();
+			playbackStatus.textContent = `${signature.name} selected. Press Start listening to hear its transformation.`;
+		} else {
+			playbackStatus.textContent = `Now hearing the ${signature.name.toLowerCase()} transformation.`;
+		}
+	}
+
+	signatures.forEach((signature) => {
+		const tile = document.createElement('button');
+		tile.type = 'button';
+		tile.className = `sig-tile${signature.id === selected.id ? ' active' : ''}`;
+		tile.dataset.signature = signature.id;
+		tile.setAttribute('aria-pressed', String(signature.id === selected.id));
+		tile.style.setProperty('--sig-color', signature.color);
+		tile.addEventListener('click', () => selectSignature(signature));
+
+		const head = document.createElement('span');
+		head.className = 'sig-tile-head';
+		const name = document.createElement('span');
+		name.className = 'sig-name';
+		name.textContent = signature.name;
+		const type = document.createElement('span');
+		type.className = 'sig-type';
+		type.textContent = signature.type;
+		head.append(name, type);
+
+		const eq = document.createElement('span');
+		eq.className = 'sig-eq';
+		eq.textContent = signature.eqSummary;
+
+		const viz = document.createElement('span');
+		viz.className = 'viz';
+
+		const curveItem = document.createElement('span');
+		curveItem.className = 'viz-item';
+		const curveLabel = document.createElement('span');
+		curveLabel.className = 'viz-label';
+		curveLabel.textContent = 'Filter curve';
+		const curveCanvas = document.createElement('canvas');
+		curveCanvas.className = 'curve-canvas';
+		curveCanvas.style.width = '100%';
+		curveCanvas.style.height = '48px';
+		curveCanvas.style.display = 'block';
+		curveCanvas.setAttribute('aria-label', `${signature.name} filter curve: ${signature.eqSummary}`);
+		curveCanvases.set(signature.id, curveCanvas);
+		curveItem.append(curveLabel, curveCanvas);
+
+		const signalItem = document.createElement('span');
+		signalItem.className = 'viz-item';
+		const signalLabel = document.createElement('span');
+		signalLabel.className = 'viz-label';
+		signalLabel.textContent = 'Live signal, source (gray) / processed (color)';
+		const signalCanvas = document.createElement('canvas');
+		signalCanvas.className = 'signal-canvas';
+		signalCanvas.style.width = '100%';
+		signalCanvas.style.height = '48px';
+		signalCanvas.style.display = 'block';
+		signalCanvas.setAttribute('aria-label', `${signature.name} grouped bar chart comparing original and processed live signal`);
+		signalCanvases.set(signature.id, signalCanvas);
+		signalItem.append(signalLabel, signalCanvas);
+
+		viz.append(curveItem, signalItem);
+		tile.append(head, eq, viz);
+		tileGrid.appendChild(tile);
+	});
+
+	function redrawCurves() {
+		signatures.forEach((signature) => {
+			const curveCanvas = curveCanvases.get(signature.id);
+			if (curveCanvas) drawMiniChart(curveCanvas, signature);
+		});
+	}
+
+	function updateOutputs() {
+		volumeValue.textContent = `${volume.value}%`;
+		if (monitorRunning && masterGain && audioContext) {
+			const now = audioContext.currentTime;
+			masterGain.gain.cancelScheduledValues(now);
+			masterGain.gain.setValueAtTime(masterGain.gain.value, now);
+			masterGain.gain.linearRampToValueAtTime(Number(volume.value) / 100, now + 0.04);
+		}
+		if (!monitorRunning) updateSignalCanvases();
+	}
+
+	function stopSignal(announce = true) {
+		if (!audioContext) return;
+		const now = audioContext.currentTime;
+		masterGain?.gain.cancelScheduledValues(now);
+		if (masterGain) {
+			masterGain.gain.setValueAtTime(masterGain.gain.value, now);
+			masterGain.gain.linearRampToValueAtTime(0, now + 0.03);
+		}
+		scheduledSources.forEach((source) => source.stop(now + 0.04));
+		scheduledSources = [];
+		masterGain = null;
+		eqInput = null;
+		eqFilters = [];
+		rawAnalyser = null;
+		window.clearTimeout(sequenceTimer);
+		monitorRunning = false;
+		cancelAnimationFrame(monitorFrame);
+		updateSignalCanvases();
+		toggleButton.textContent = 'Start listening';
+		if (announce) playbackStatus.textContent = 'Stopped. Pick a signature and press Start listening.';
+	}
+
+	function applySignatureEq(signature: Signature) {
+		if (!audioContext || !eqFilters.length) return;
+		const now = audioContext.currentTime;
+		eqFilters.forEach((filter, index) => {
+			filter.gain.cancelScheduledValues(now);
+			filter.gain.setValueAtTime(filter.gain.value, now);
+			filter.gain.linearRampToValueAtTime(signature.eq[index], now + 0.06);
+		});
+	}
+
+	function makeVoice(frequency: number, type: OscillatorType, duration: number, level: number, part: string, bend = 0) {
+		if (!audioContext || !eqInput) return;
+		const context = audioContext;
+		const now = context.currentTime;
+		const oscillator = context.createOscillator();
+		const noteGain = context.createGain();
+		const tone = context.createBiquadFilter();
+		tone.type = 'lowpass';
+		tone.frequency.setValueAtTime(part === 'air' ? 16000 : part === 'bass' ? 420 : 12000, now);
+		oscillator.type = type;
+		oscillator.frequency.setValueAtTime(frequency, now);
+		if (bend) oscillator.frequency.exponentialRampToValueAtTime(Math.max(20, frequency + bend), now + duration * 0.55);
+		noteGain.gain.setValueAtTime(0, now);
+		noteGain.gain.linearRampToValueAtTime(level, now + 0.018);
+		noteGain.gain.exponentialRampToValueAtTime(0.001, now + duration);
+		oscillator.connect(noteGain);
+		noteGain.connect(tone);
+		tone.connect(eqInput);
+		oscillator.start(now);
+		oscillator.stop(now + duration + 0.02);
+		scheduledSources.push(oscillator);
+		oscillator.addEventListener('ended', () => {
+			scheduledSources = scheduledSources.filter((source) => source !== oscillator);
+		});
+	}
+
+	function makeNoiseVoice(frequency: number, duration: number, level: number) {
+		if (!audioContext || !eqInput) return;
+		const context = audioContext;
+		const now = context.currentTime;
+		const frameCount = Math.ceil(context.sampleRate * duration);
+		const buffer = context.createBuffer(1, frameCount, context.sampleRate);
+		const data = buffer.getChannelData(0);
+		for (let index = 0; index < frameCount; index++) data[index] = Math.random() * 2 - 1;
+		const source = context.createBufferSource();
+		const band = context.createBiquadFilter();
+		const noteGain = context.createGain();
+		source.buffer = buffer;
+		band.type = 'bandpass';
+		band.frequency.setValueAtTime(frequency, now);
+		band.Q.setValueAtTime(0.35, now);
+		noteGain.gain.setValueAtTime(0, now);
+		noteGain.gain.linearRampToValueAtTime(level, now + 0.012);
+		noteGain.gain.exponentialRampToValueAtTime(0.001, now + duration);
+		source.connect(band);
+		band.connect(noteGain);
+		noteGain.connect(eqInput);
+		source.start(now);
+		scheduledSources.push(source);
+		source.addEventListener('ended', () => {
+			scheduledSources = scheduledSources.filter((scheduled) => scheduled !== source);
+		});
+	}
+
+	function scheduleMelodyNote() {
+		if (!audioContext || !eqInput) return;
+		const step = sequenceIndex % 16;
+		const phrase = Math.floor(sequenceIndex / 16);
+		const interval = 60000 / activePreset.tempo / 2;
+		const chords = [
+			[293.66, 369.99, 440, 554.37],
+			[246.94, 293.66, 369.99, 440],
+			[196, 246.94, 293.66, 369.99],
+			[220, 246.94, 329.63, 440],
+		];
+		const melody = activePreset.melody;
+		const chord = chords[Math.floor(step / 4)];
+
+		if (step % 4 === 0) {
+			chord.forEach((frequency) => {
+				makeVoice(frequency, activePreset.chordType, (interval * 3.6) / 1000, 0.06, 'vocal');
+				makeVoice(frequency * 2, 'sine', (interval * 2.5) / 1000, 0.025, 'vocal');
+			});
+		}
+		if (step % 2 === 0) makeVoice(activePreset.bass[step], 'sine', (interval * 1.5) / 1000, 0.14, 'bass', -activePreset.bass[step] * 0.16);
+		makeVoice(melody[step], 'triangle', (interval * 1.35) / 1000, 0.07, 'vocal');
+		makeVoice(melody[step], 'sawtooth', (interval * 0.8) / 1000, 0.026, 'air');
+		makeVoice(melody[step] * 2, 'sine', (interval * 0.85) / 1000, 0.025, 'vocal');
+		if (step % 4 === 2) makeVoice(melody[step] * 3, 'sine', (interval * 0.42) / 1000, 0.012, 'air');
+		if (step % 4 === 1) makeNoiseVoice([250, 700, 1800, 4200][phrase % 4], (interval * 0.75) / 1000, 0.024);
+		if (step % 4 === 3) makeNoiseVoice([4200, 6500, 8500, 11000][phrase % 4], (interval * 0.5) / 1000, 0.022);
+		if (step % 2 === 1) makeVoice(3300 + step * 35, 'sine', (interval * 0.28) / 1000, 0.038, 'air');
+		if (step % 4 === 0 || step % 4 === 2) makeVoice(120, 'sine', (interval * 0.34) / 1000, 0.1, 'bass', -74);
+
+		sequenceIndex++;
+		sequenceTimer = window.setTimeout(scheduleMelodyNote, interval);
+	}
+
+	async function playSignal() {
+		stopSignal(false);
+		audioContext ??= new AudioContext();
+		await audioContext.resume();
+		const context = audioContext;
+		const now = context.currentTime;
+
+		eqInput = context.createGain();
+		masterGain = context.createGain();
+		const level = Number(volume.value) / 100;
+		masterGain.gain.setValueAtTime(0, now);
+		masterGain.gain.linearRampToValueAtTime(level, now + 0.04);
+
+		const filterSpecs: Array<[BiquadFilterType, number, number?]> = [
+			['lowshelf', 100],
+			['peaking', 250, 0.9],
+			['peaking', 1000, 1],
+			['peaking', 3500, 1],
+			['highshelf', 8000],
+		];
+		eqFilters = filterSpecs.map(([type, frequency, q], index) => {
+			const filter = context.createBiquadFilter();
+			filter.type = type;
+			filter.frequency.setValueAtTime(frequency, now);
+			if (q) filter.Q.setValueAtTime(q, now);
+			filter.gain.setValueAtTime(selected.eq[index], now);
+			return filter;
+		});
+		eqInput.connect(eqFilters[0]);
+		eqFilters.forEach((filter, index) => {
+			if (index < eqFilters.length - 1) filter.connect(eqFilters[index + 1]);
+		});
+		eqFilters[eqFilters.length - 1].connect(masterGain);
+		masterGain.connect(context.destination);
+
+		rawAnalyser = context.createAnalyser();
+		rawAnalyser.fftSize = 256;
+		rawAnalyser.smoothingTimeConstant = 0.8;
+		const sink = context.createGain();
+		sink.gain.setValueAtTime(0, now);
+		eqInput.connect(rawAnalyser);
+		rawAnalyser.connect(sink);
+		sink.connect(context.destination);
+
+		liveBarFreqs = getBarFrequencies(context.sampleRate);
+		eqMultCache.clear();
+
+		monitorRunning = true;
+		sequenceIndex = 0;
+		cancelAnimationFrame(monitorFrame);
+		monitorFrame = requestAnimationFrame(updateSignalCanvases);
+		playbackStatus.textContent = `Playing the ${selected.name.toLowerCase()} transformation. Select another signature to hear it immediately.`;
+		scheduleMelodyNote();
+		toggleButton.textContent = 'Stop listening';
+	}
+
+	function toggleSignal() {
+		if (monitorRunning) stopSignal();
+		else playSignal();
+	}
+
+	function selectMusicPreset(preset: MusicPreset) {
+		activePreset = preset;
+		sequenceIndex = 0;
+		presetButtons.forEach((button) => {
+			const active = button.dataset.preset === preset.id;
+			button.classList.toggle('active', active);
+			button.setAttribute('aria-pressed', String(active));
+		});
+		if (monitorRunning) {
+			window.clearTimeout(sequenceTimer);
+			scheduleMelodyNote();
+			playbackStatus.textContent = `${preset.name} preset selected. The ${selected.name.toLowerCase()} transformation remains active.`;
+		} else {
+			playbackStatus.textContent = `${preset.name} preset selected. Press Start listening to hear the ${selected.name.toLowerCase()} transformation.`;
+		}
+	}
+
+	volume.addEventListener('input', updateOutputs);
+	toggleButton.addEventListener('click', toggleSignal);
+	presetButtons.forEach((button) => {
+		button.addEventListener('click', () => {
+			const preset = musicPresets.find((candidate) => candidate.id === button.dataset.preset);
+			if (preset) selectMusicPreset(preset);
+		});
+	});
+
+	const chartResizeObserver = new ResizeObserver(drawChart);
+	chartResizeObserver.observe(canvas.parentElement!);
+
+	let resizeQueued = false;
+	const gridResizeObserver = new ResizeObserver(() => {
+		if (resizeQueued) return;
+		resizeQueued = true;
+		requestAnimationFrame(() => {
+			resizeQueued = false;
+			redrawCurves();
+			if (!monitorRunning) updateSignalCanvases();
+		});
+	});
+	gridResizeObserver.observe(tileGrid);
+
+	requestAnimationFrame(() => {
+		redrawCurves();
+		selectSignature(selected);
+	});
+	updateOutputs();
+
+	document.addEventListener('astro:before-swap', () => {
+		stopSignal(false);
+		chartResizeObserver.disconnect();
+		gridResizeObserver.disconnect();
+		audioContext?.close();
+		audioContext = null;
+		analysisContext?.close();
+		analysisContext = null;
+	});
+</script>
+
+<style>
+	#sound-signature-lab {
+		--lab-ink: #edf3ff;
+		--lab-muted: #aab6ce;
+		--lab-border: rgba(160, 187, 230, 0.17);
+		--lab-panel: rgba(16, 24, 43, 0.78);
+		--lab-accent: #70e6c4;
+	}
+
+	.response-panel {
+		background: var(--lab-panel);
+		border: 1px solid var(--lab-border);
+		border-radius: 16px;
+		padding: clamp(1.1rem, 3vw, 1.75rem);
+	}
+
+	.panel-heading {
+		display: flex;
+		justify-content: space-between;
+		gap: 1rem;
+		align-items: start;
+	}
+
+	.eyebrow {
+		margin: 0 0 0.35rem;
+		color: var(--lab-accent);
+		font-size: 0.68rem;
+		font-weight: 700;
+		letter-spacing: 0.13em;
+		text-transform: uppercase;
+	}
+
+	h2 {
+		margin: 0;
+		font-size: clamp(1.25rem, 3vw, 1.7rem);
+	}
+
+	.summary {
+		max-width: 18rem;
+		margin: 0;
+		color: var(--lab-muted);
+		font-size: 0.8rem;
+		line-height: 1.5;
+		text-align: right;
+	}
+
+	button:focus-visible,
+	input:focus-visible {
+		outline: 2px solid var(--lab-accent);
+		outline-offset: 3px;
+	}
+
+	.chart-wrap {
+		height: 300px;
+		margin-top: 1.25rem;
+		border: 1px solid rgba(160, 187, 230, 0.1);
+		border-radius: 10px;
+		background: radial-gradient(circle at 50% 50%, rgba(112, 230, 196, 0.08), transparent 70%), #0c1325;
+		overflow: hidden;
+	}
+
+	#response-chart {
+		display: block;
+		width: 100%;
+		height: 100%;
+	}
+
+	.frequency-legend {
+		display: grid;
+		grid-template-columns: repeat(5, 1fr);
+		gap: 0.25rem;
+		margin-top: 0.75rem;
+		color: var(--lab-muted);
+		font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+		font-size: 0.62rem;
+		line-height: 1.45;
+	}
+
+	.frequency-legend span:not(:last-child) {
+		border-right: 1px solid var(--lab-border);
+	}
+
+	.picker-label {
+		margin: 1.75rem 0 0.85rem;
+		color: var(--lab-muted);
+		font-size: 0.82rem;
+		line-height: 1.5;
+	}
+
+	.signature-tiles {
+		display: grid;
+		grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
+		gap: 0.75rem;
+	}
+
+	#sound-signature-lab :global(.sig-tile) {
+		display: flex;
+		flex-direction: column;
+		gap: 0.35rem;
+		padding: 0.9rem;
+		border: 1px solid var(--lab-border);
+		border-radius: 12px;
+		background: rgba(12, 19, 37, 0.6);
+		color: var(--lab-ink);
+		font: inherit;
+		text-align: left;
+		cursor: pointer;
+		transition: border-color 0.18s ease, background 0.18s ease, box-shadow 0.18s ease, transform 0.18s ease;
+	}
+
+	#sound-signature-lab :global(.sig-tile:hover) {
+		border-color: var(--sig-color);
+		transform: translateY(-2px);
+	}
+
+	#sound-signature-lab :global(.sig-tile.active) {
+		border-color: var(--sig-color);
+		background: color-mix(in srgb, var(--sig-color) 12%, rgba(12, 19, 37, 0.6));
+		box-shadow: 0 0 0 1px var(--sig-color), 0 0 18px color-mix(in srgb, var(--sig-color) 35%, transparent);
+	}
+
+	#sound-signature-lab :global(.sig-tile-head) {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 0.5rem;
+	}
+
+	#sound-signature-lab :global(.sig-name) {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.45rem;
+		font-size: 0.95rem;
+		font-weight: 600;
+	}
+
+	#sound-signature-lab :global(.sig-name)::before {
+		content: '';
+		width: 0.6rem;
+		height: 0.6rem;
+		border-radius: 50%;
+		background: var(--sig-color);
+		box-shadow: 0 0 8px var(--sig-color);
+	}
+
+	#sound-signature-lab :global(.sig-type) {
+		color: var(--sig-color);
+		font-size: 0.6rem;
+		font-weight: 600;
+		letter-spacing: 0.05em;
+		text-transform: uppercase;
+		text-align: right;
+	}
+
+	#sound-signature-lab :global(.sig-eq) {
+		margin-bottom: 0.35rem;
+		color: var(--lab-muted);
+		font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+		font-size: 0.6rem;
+	}
+
+	#sound-signature-lab :global(.viz) {
+		display: flex;
+		flex-direction: column;
+		gap: 0.5rem;
+	}
+
+	#sound-signature-lab :global(.viz-item) {
+		display: flex;
+		flex-direction: column;
+		gap: 0.22rem;
+	}
+
+	#sound-signature-lab :global(.viz-label) {
+		color: var(--lab-muted);
+		font-size: 0.53rem;
+		letter-spacing: 0.09em;
+		text-transform: uppercase;
+	}
+
+	#sound-signature-lab :global(.curve-canvas),
+	#sound-signature-lab :global(.signal-canvas) {
+		border-radius: 4px;
+	}
+
+	.controls {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: end;
+		gap: 1.25rem;
+		margin-top: 1.75rem;
+		padding-top: 1.5rem;
+		border-top: 1px solid var(--lab-border);
+	}
+
+	.preset-row {
+		display: flex;
+		align-items: center;
+		gap: 0.35rem;
+	}
+
+	.control-label {
+		margin-right: 0.15rem;
+		color: var(--lab-muted);
+		font-size: 0.72rem;
+		font-weight: 600;
+	}
+
+	.mode-button {
+		padding: 0.48rem 0.7rem;
+		border: 1px solid var(--lab-border);
+		border-radius: 6px;
+		background: rgba(12, 19, 37, 0.6);
+		color: var(--lab-muted);
+		font: inherit;
+		font-size: 0.72rem;
+		font-weight: 700;
+		cursor: pointer;
+		transition: background 0.18s ease, border-color 0.18s ease, color 0.18s ease;
+	}
+
+	.mode-button.active {
+		border-color: var(--lab-accent);
+		background: var(--lab-accent);
+		color: #07151a;
+	}
+
+	.mode-button:not(.active):hover {
+		border-color: var(--lab-muted);
+		color: var(--lab-ink);
+	}
+
+	.level-row {
+		flex: 1;
+		min-width: 220px;
+	}
+
+	.label-row {
+		display: flex;
+		justify-content: space-between;
+		gap: 1rem;
+		align-items: baseline;
+	}
+
+	.label-row label {
+		margin: 0;
+		color: var(--lab-ink);
+		font-size: 0.78rem;
+		font-weight: 600;
+	}
+
+	output {
+		color: var(--lab-accent);
+		font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+		font-size: 0.76rem;
+	}
+
+	input[type='range'] {
+		width: 100%;
+		margin-top: 0.5rem;
+		accent-color: var(--lab-accent);
+		cursor: pointer;
+	}
+
+	.action-row {
+		display: flex;
+		gap: 0.65rem;
+	}
+
+	#toggle-signal {
+		padding: 0.7rem 1.4rem;
+		border: 1px solid var(--lab-accent);
+		border-radius: 8px;
+		background: var(--lab-accent);
+		color: #07151a;
+		font: inherit;
+		font-size: 0.85rem;
+		font-weight: 700;
+		cursor: pointer;
+		transition: background 0.18s ease;
+	}
+
+	#toggle-signal:hover {
+		background: #a0f4da;
+	}
+
+	.playback-status,
+	.safety-note {
+		margin: 0.9rem 0 0;
+		font-size: 0.76rem;
+		line-height: 1.5;
+	}
+
+	.playback-status {
+		color: var(--lab-accent);
+		min-height: 1.2em;
+	}
+
+	.safety-note {
+		padding-top: 0.9rem;
+		border-top: 1px solid var(--lab-border);
+		color: var(--lab-muted);
+	}
+
+	.safety-note strong {
+		color: #f5d06f;
+	}
+
+	@media (max-width: 480px) {
+		.response-panel {
+			padding: 1rem;
+			border-radius: 12px;
+		}
+
+		.panel-heading {
+			flex-direction: column;
+		}
+
+		.summary {
+			max-width: none;
+			text-align: left;
+		}
+
+		.chart-wrap {
+			height: 240px;
+		}
+
+		.frequency-legend {
+			font-size: 0.55rem;
+		}
+
+		.frequency-legend span {
+			overflow-wrap: anywhere;
+		}
+
+		.signature-tiles {
+			grid-template-columns: 1fr;
+		}
+
+	}
+
+	@media (max-width: 680px) {
+		#sound-signature-lab {
+			padding-bottom: 5rem;
+		}
+
+		#toggle-signal {
+			position: fixed;
+			right: 0.75rem;
+			bottom: max(0.75rem, env(safe-area-inset-bottom));
+			left: 0.75rem;
+			z-index: 10;
+			min-height: 3.25rem;
+			box-shadow: 0 4px 12px rgba(0, 0, 0, 0.38);
+		}
+	}
+
+	@media (prefers-reduced-motion: reduce) {
+		.sig-tile {
+			transition: none;
+		}
+	}
+</style>

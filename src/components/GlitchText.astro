@@ -15,3 +15,49 @@ const scrambled = text
 ---
 
 <Tag class={className} data-glitch data-text={text} set:html={scrambled} />
+
+<script>
+	const glitchChars = '@#$%&*!?/|~^+=_';
+
+	function randomChar() {
+		return glitchChars[Math.floor(Math.random() * glitchChars.length)];
+	}
+
+	function decode(el: Element): Promise<void> {
+		return new Promise((done) => {
+			const text = (el as HTMLElement).dataset.text || '';
+			const len = text.length;
+
+			const resolved = text.split('').map((c) => c === ' ');
+			const display = (el.textContent || '').split('');
+
+			const iterations = 12;
+			let frame = 0;
+			const charDelay = 2;
+
+			function step() {
+				frame++;
+				for (let i = 0; i < len; i++) {
+					if (resolved[i] || text[i] === ' ') continue;
+					if (frame > i * charDelay + iterations) {
+						display[i] = text[i];
+						resolved[i] = true;
+					} else if (frame > i * charDelay) {
+						display[i] = randomChar();
+					}
+				}
+				el.textContent = display.join('');
+				if (resolved.every(Boolean)) { done(); return; }
+				requestAnimationFrame(step);
+			}
+			requestAnimationFrame(step);
+		});
+	}
+
+	const els = document.querySelectorAll('[data-glitch]');
+	(async () => {
+		for (const el of els) {
+			await decode(el);
+		}
+	})();
+</script>

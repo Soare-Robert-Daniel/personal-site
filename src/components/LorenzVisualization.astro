@@ -82,8 +82,9 @@
 	resize();
 	window.addEventListener('resize', resize);
 
+	let animId = 0;
 	function animate() {
-		requestAnimationFrame(animate);
+		animId = requestAnimationFrame(animate);
 
 		headIndex = (headIndex + 3) % steps;
 		const p = points[headIndex];
@@ -94,6 +95,17 @@
 		renderer.render(scene, camera);
 	}
 	animate();
+
+	document.addEventListener('astro:before-swap', () => {
+		cancelAnimationFrame(animId);
+		window.removeEventListener('resize', resize);
+		geometry.dispose();
+		material.dispose();
+		headGeom.dispose();
+		headMat.dispose();
+		controls.dispose();
+		renderer.dispose();
+	}, { once: true });
 </script>
 
 <style>

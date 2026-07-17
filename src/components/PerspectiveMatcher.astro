@@ -495,6 +495,9 @@
 
 	// ----- Render loop -----
 
+	let animId = 0;
+	let pmResizeObserver: ResizeObserver | null = null;
+
 	function resize() {
 		const w = wrap.clientWidth;
 		const h = wrap.clientHeight;
@@ -505,7 +508,8 @@
 	resize();
 	window.addEventListener('resize', resize);
 	if ('ResizeObserver' in window) {
-		new ResizeObserver(resize).observe(wrap);
+		pmResizeObserver = new ResizeObserver(resize);
+		pmResizeObserver.observe(wrap);
 	}
 
 	function updateAlignmentUI(cos: number) {
@@ -521,7 +525,7 @@
 	}
 
 	function animate() {
-		requestAnimationFrame(animate);
+		animId = requestAnimationFrame(animate);
 		const now = performance.now();
 
 		if (explodeAnim) {
@@ -557,6 +561,18 @@
 	loadBest();
 	enterIdle();
 	animate();
+
+	document.addEventListener('astro:before-swap', () => {
+		cancelAnimationFrame(animId);
+		window.removeEventListener('resize', resize);
+		if (pmResizeObserver) pmResizeObserver.disconnect();
+		if (revealTimer !== null) clearTimeout(revealTimer);
+		disposeFragments();
+		planeGeom.dispose();
+		planeMat.dispose();
+		controls.dispose();
+		renderer.dispose();
+	}, { once: true });
 </script>
 
 <style>
