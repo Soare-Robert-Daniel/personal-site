@@ -3,22 +3,12 @@
 		<div class="panel-heading">
 			<div>
 				<p class="eyebrow">Original signal → transformed sound</p>
-				<h2 id="signature-heading">Sound signature matrix</h2>
+				<h2 id="signature-heading">Choose a sound signature</h2>
 			</div>
 			<p id="signature-summary" class="summary" aria-live="polite"></p>
 		</div>
-		<div class="chart-wrap">
-			<canvas id="response-chart" role="img" aria-label="Detailed comparison of the original flat signal and the selected transformed response"></canvas>
-		</div>
-		<div class="frequency-legend" aria-hidden="true">
-			<span>Sub-bass<br />20–60 Hz</span>
-			<span>Bass<br />60–250 Hz</span>
-			<span>Mids<br />250 Hz–2 kHz</span>
-			<span>Presence<br />2–6 kHz</span>
-			<span>Air<br />6–20 kHz</span>
-		</div>
 
-		<p class="picker-label">Pick a signature to transform the playing music. Each tile shows the unprocessed source beside that signature's processed result.</p>
+		<p class="picker-label">Pick a signature to transform the playing music. Each tile shows the filter curve and a live comparison of the unprocessed source beside that signature's processed result.</p>
 		<div id="signature-tiles" class="signature-tiles" role="group" aria-label="Choose a sound signature"></div>
 
 		<div class="controls">
@@ -31,7 +21,7 @@
 			</div>
 			<div class="level-row">
 				<div class="label-row">
-					<label for="volume">Safety level</label>
+					<label for="volume">Listening level</label>
 					<output id="volume-value" for="volume">8%</output>
 				</div>
 				<input id="volume" type="range" min="0" max="20" value="8" step="1" />
@@ -46,6 +36,8 @@
 </div>
 
 <script>
+	import * as Tone from 'tone';
+
 	type Signature = {
 		id: string;
 		name: string;
@@ -56,13 +48,12 @@
 		eqSummary: string;
 	};
 
+	type MusicStyle = 'edm' | 'lofi' | 'ambient' | 'arp';
+
 	type MusicPreset = {
-		id: string;
+		id: MusicStyle;
 		name: string;
 		tempo: number;
-		chordType: OscillatorType;
-		bass: number[];
-		melody: number[];
 	};
 
 	const signatures: Signature[] = [
@@ -74,14 +65,12 @@
 		{ id: 'v-shaped', name: 'V-shaped', type: 'Extreme V', description: 'Strongly raises bass and treble while pushing the middle behind the mix.', color: '#d878df', eq: [10, 4, -7, 7, 10], eqSummary: 'Bass +10 · Mids −7 · Treble +10' },
 	];
 	const musicPresets: MusicPreset[] = [
-		{ id: 'edm', name: 'EDM', tempo: 128, chordType: 'sawtooth', bass: [55, 55, 55, 55, 65.41, 65.41, 65.41, 65.41, 49, 49, 49, 49, 73.42, 73.42, 73.42, 73.42], melody: [659.26, 659.26, 783.99, 880, 659.26, 587.33, 659.26, 783.99, 880, 880, 1046.5, 1174.66, 1046.5, 880, 783.99, 659.26] },
-		{ id: 'lofi', name: 'Lo-fi', tempo: 82, chordType: 'triangle', bass: [73.42, 73.42, 73.42, 82.41, 61.74, 61.74, 61.74, 73.42, 65.41, 65.41, 65.41, 73.42, 55, 55, 61.74, 65.41], melody: [293.66, 329.63, 369.99, 440, 369.99, 329.63, 293.66, 261.63, 329.63, 369.99, 440, 493.88, 440, 369.99, 329.63, 293.66] },
-		{ id: 'ambient', name: 'Ambient', tempo: 68, chordType: 'sine', bass: [49, 49, 55, 55, 61.74, 61.74, 55, 55, 49, 49, 55, 55, 65.41, 65.41, 61.74, 55], melody: [440, 493.88, 587.33, 659.26, 739.99, 659.26, 587.33, 493.88, 369.99, 440, 493.88, 587.33, 659.26, 587.33, 493.88, 440] },
-		{ id: 'arp', name: 'Arpeggio', tempo: 112, chordType: 'square', bass: [82.41, 82.41, 92.5, 82.41, 73.42, 73.42, 82.41, 73.42, 65.41, 65.41, 73.42, 65.41, 61.74, 61.74, 73.42, 61.74], melody: [261.63, 329.63, 392, 523.25, 293.66, 369.99, 440, 587.33, 220, 293.66, 369.99, 440, 246.94, 329.63, 392, 493.88] },
+		{ id: 'edm', name: 'EDM', tempo: 128 },
+		{ id: 'lofi', name: 'Lo-fi', tempo: 84 },
+		{ id: 'ambient', name: 'Ambient', tempo: 70 },
+		{ id: 'arp', name: 'Arpeggio', tempo: 110 },
 	];
 
-	const canvas = document.getElementById('response-chart') as HTMLCanvasElement;
-	const chartContext = canvas.getContext('2d')!;
 	const tileGrid = document.getElementById('signature-tiles')!;
 	const summary = document.getElementById('signature-summary')!;
 	const volume = document.getElementById('volume') as HTMLInputElement;
@@ -93,12 +82,12 @@
 	let selected = signatures[0];
 	let audioContext: AudioContext | null = null;
 	let masterGain: GainNode | null = null;
-	let eqInput: GainNode | null = null;
 	let eqFilters: BiquadFilterNode[] = [];
 	let rawAnalyser: AnalyserNode | null = null;
-	let scheduledSources: AudioScheduledSourceNode[] = [];
-	let sequenceTimer = 0;
-	let sequenceIndex = 0;
+	let analyserSink: GainNode | null = null;
+	let mixBus: Tone.Gain | null = null;
+	let toneNodes: Tone.ToneAudioNode[] = [];
+	let toneParts: Array<Tone.Sequence | Tone.Part | Tone.Loop> = [];
 	let monitorFrame = 0;
 	let monitorRunning = false;
 	let activePreset = musicPresets[0];
@@ -106,97 +95,6 @@
 	const curveCanvases = new Map<string, HTMLCanvasElement>();
 	let liveBarFreqs = getBarFrequencies(48000);
 	const eqMultCache = new Map<string, number[]>();
-
-	function drawChart() {
-		const rect = canvas.getBoundingClientRect();
-		const dpr = window.devicePixelRatio || 1;
-		canvas.width = Math.max(1, Math.floor(rect.width * dpr));
-		canvas.height = Math.max(1, Math.floor(rect.height * dpr));
-		chartContext.setTransform(dpr, 0, 0, dpr, 0, 0);
-		const width = rect.width;
-		const height = rect.height;
-		const padding = { top: 28, right: 18, bottom: 30, left: 38 };
-		const graphWidth = width - padding.left - padding.right;
-		const graphHeight = height - padding.top - padding.bottom;
-		const centerY = padding.top + graphHeight / 2;
-		const { frequencies, decibels } = computeFilterResponse(selected.eq, 160);
-		const maxAbsDb = Math.max(...decibels.map((value) => Math.abs(value)));
-		const axisLimit = Math.max(12, Math.ceil((maxAbsDb + 2) / 6) * 6);
-		const tickStep = axisLimit > 18 ? 12 : 6;
-
-		chartContext.clearRect(0, 0, width, height);
-		chartContext.font = '11px ui-monospace, SFMono-Regular, Menlo, monospace';
-		chartContext.textAlign = 'right';
-		chartContext.textBaseline = 'middle';
-		for (let db = -axisLimit; db <= axisLimit; db += tickStep) {
-			const y = centerY - (db / axisLimit) * (graphHeight / 2);
-			chartContext.strokeStyle = db === 0 ? 'rgba(237, 243, 255, 0.32)' : 'rgba(237, 243, 255, 0.1)';
-			chartContext.lineWidth = db === 0 ? 1.5 : 1;
-			chartContext.beginPath();
-			chartContext.moveTo(padding.left, y);
-			chartContext.lineTo(width - padding.right, y);
-			chartContext.stroke();
-			chartContext.fillStyle = 'rgba(237, 243, 255, 0.55)';
-			chartContext.fillText(`${db > 0 ? '+' : ''}${db}`, padding.left - 8, y);
-		}
-
-		const minLog = Math.log10(20);
-		const maxLog = Math.log10(20000);
-		const xFor = (frequency: number) => padding.left + ((Math.log10(frequency) - minLog) / (maxLog - minLog)) * graphWidth;
-		const yFor = (point: number) => centerY - (point / axisLimit) * (graphHeight / 2);
-		const gradient = chartContext.createLinearGradient(0, padding.top, 0, height - padding.bottom);
-		gradient.addColorStop(0, `${selected.color}55`);
-		gradient.addColorStop(1, `${selected.color}00`);
-
-		chartContext.beginPath();
-		chartContext.moveTo(padding.left, centerY);
-		chartContext.lineTo(width - padding.right, centerY);
-		chartContext.strokeStyle = 'rgba(237, 243, 255, 0.25)';
-		chartContext.setLineDash([6, 4]);
-		chartContext.lineWidth = 1.5;
-		chartContext.stroke();
-		chartContext.setLineDash([]);
-
-		chartContext.beginPath();
-		decibels.forEach((point, index) => {
-			const x = xFor(frequencies[index]);
-			const y = yFor(point);
-			if (index === 0) chartContext.moveTo(x, y);
-			else chartContext.lineTo(x, y);
-		});
-		chartContext.lineTo(xFor(frequencies[frequencies.length - 1]), centerY);
-		chartContext.lineTo(xFor(frequencies[0]), centerY);
-		chartContext.closePath();
-		chartContext.fillStyle = gradient;
-		chartContext.fill();
-
-		chartContext.beginPath();
-		decibels.forEach((point, index) => {
-			const x = xFor(frequencies[index]);
-			const y = yFor(point);
-			if (index === 0) chartContext.moveTo(x, y);
-			else chartContext.lineTo(x, y);
-		});
-		chartContext.strokeStyle = selected.color;
-		chartContext.lineWidth = 3;
-		chartContext.lineJoin = 'round';
-		chartContext.lineCap = 'round';
-		chartContext.shadowColor = selected.color;
-		chartContext.shadowBlur = 14;
-		chartContext.stroke();
-		chartContext.shadowBlur = 0;
-		[20, 100, 1000, 10000, 20000].forEach((frequency) => {
-			const point = interpDb(frequencies, decibels, frequency);
-			chartContext.beginPath();
-			chartContext.arc(xFor(frequency), yFor(point), 3.5, 0, Math.PI * 2);
-			chartContext.fillStyle = selected.color;
-			chartContext.fill();
-		});
-		chartContext.fillStyle = 'rgba(237, 243, 255, 0.6)';
-		chartContext.textAlign = 'left';
-		chartContext.textBaseline = 'top';
-		chartContext.fillText('dB', padding.left, 7);
-	}
 
 	let analysisContext: AudioContext | null = null;
 
@@ -241,33 +139,51 @@
 
 	function drawMiniChart(miniCanvas: HTMLCanvasElement, signature: Signature) {
 		const rect = miniCanvas.getBoundingClientRect();
-		const width = Math.max(80, rect.width);
-		const height = 48;
+		const width = Math.max(120, rect.width);
+		const height = 88;
 		const dpr = window.devicePixelRatio || 1;
 		miniCanvas.width = Math.max(1, Math.floor(width * dpr));
 		miniCanvas.height = Math.max(1, Math.floor(height * dpr));
 		const context = miniCanvas.getContext('2d')!;
 		context.setTransform(dpr, 0, 0, dpr, 0, 0);
 		const { decibels } = computeFilterResponse(signature.eq);
-		const baseline = height / 2;
+		const leftPad = 28;
+		const rightPad = 6;
+		const topPad = 8;
+		const bottomPad = 8;
+		const graphWidth = Math.max(1, width - leftPad - rightPad);
+		const graphHeight = Math.max(1, height - topPad - bottomPad);
+		const baseline = topPad + graphHeight / 2;
 		const dbScale = Math.max(12, Math.ceil((Math.max(...decibels.map((value) => Math.abs(value))) + 2) / 6) * 6);
+		const tickStep = dbScale > 18 ? 12 : 6;
+		const yFor = (db: number) => baseline - (db / dbScale) * (graphHeight / 2);
+
 		context.clearRect(0, 0, width, height);
 		context.fillStyle = 'rgba(10, 15, 28, 0.6)';
 		context.fillRect(0, 0, width, height);
-		context.strokeStyle = 'rgba(170, 182, 206, 0.35)';
-		context.setLineDash([3, 3]);
-		context.lineWidth = 1;
-		context.beginPath();
-		context.moveTo(0, baseline);
-		context.lineTo(width, baseline);
-		context.stroke();
-		context.setLineDash([]);
+
+		context.font = '10px ui-monospace, SFMono-Regular, Menlo, monospace';
+		context.textAlign = 'right';
+		context.textBaseline = 'middle';
+		for (let db = -dbScale; db <= dbScale; db += tickStep) {
+			const y = yFor(db);
+			context.strokeStyle = db === 0 ? 'rgba(170, 182, 206, 0.42)' : 'rgba(170, 182, 206, 0.14)';
+			context.setLineDash(db === 0 ? [3, 3] : []);
+			context.lineWidth = db === 0 ? 1 : 1;
+			context.beginPath();
+			context.moveTo(leftPad, y);
+			context.lineTo(width - rightPad, y);
+			context.stroke();
+			context.setLineDash([]);
+			context.fillStyle = 'rgba(170, 182, 206, 0.72)';
+			context.fillText(`${db > 0 ? '+' : ''}${db}`, leftPad - 4, y);
+		}
 
 		function drawCurve(stroke: string, fill: string, data: number[], lineWidth: number, glow = false) {
 			context.beginPath();
 			data.forEach((db, index) => {
-				const x = (index / (data.length - 1)) * width;
-				const y = baseline - (db / dbScale) * (height / 2);
+				const x = leftPad + (index / (data.length - 1)) * graphWidth;
+				const y = yFor(db);
 				if (index === 0) context.moveTo(x, y);
 				else context.lineTo(x, y);
 			});
@@ -277,14 +193,14 @@
 			context.lineCap = 'round';
 			if (glow) {
 				context.shadowColor = stroke;
-				context.shadowBlur = 10;
+				context.shadowBlur = 12;
 			}
 			context.stroke();
 			context.shadowBlur = 0;
-			context.lineTo(width, baseline);
-			context.lineTo(0, baseline);
+			context.lineTo(leftPad + graphWidth, baseline);
+			context.lineTo(leftPad, baseline);
 			context.closePath();
-			const gradient = context.createLinearGradient(0, 0, 0, height);
+			const gradient = context.createLinearGradient(0, topPad, 0, height - bottomPad);
 			gradient.addColorStop(0, fill);
 			gradient.addColorStop(1, 'transparent');
 			context.fillStyle = gradient;
@@ -292,8 +208,8 @@
 		}
 
 		const flatLine = new Array(decibels.length).fill(0);
-		drawCurve('rgba(170, 182, 206, 0.5)', 'rgba(170, 182, 206, 0.08)', flatLine, 1.5);
-		drawCurve(signature.color, `${signature.color}40`, decibels, 2.5, true);
+		drawCurve('rgba(170, 182, 206, 0.5)', 'rgba(170, 182, 206, 0.08)', flatLine, 1.75);
+		drawCurve(signature.color, `${signature.color}40`, decibels, 3, true);
 	}
 
 	function interpDb(frequencies: number[], decibels: number[], frequency: number) {
@@ -332,12 +248,20 @@
 		context.fillStyle = 'rgba(10, 15, 28, 0.5)';
 		context.fillRect(0, 0, width, height);
 
+		// Shared peak so source vs processed stays comparable without clipping extreme EQ boosts.
+		let peak = 0.001;
+		sourceBars.forEach((value, index) => {
+			peak = Math.max(peak, value, processedBars[index] ?? value);
+		});
+		const scale = 0.82 / peak;
+		const usableHeight = height - 10;
+
 		const groupWidth = width / sourceBars.length;
 		const gap = Math.min(2, groupWidth * 0.14);
 		const barWidth = Math.max(1, (groupWidth - gap * 2) / 2);
 		const drawBar = (value: number, x: number, fill: string) => {
-			const barHeight = value * (height - 8);
-			const y = height - 4 - barHeight;
+			const barHeight = Math.max(2, value * scale * usableHeight);
+			const y = height - 5 - barHeight;
 			const gradient = context.createLinearGradient(0, height, 0, y);
 			gradient.addColorStop(0, `${fill}20`);
 			gradient.addColorStop(1, live ? fill : `${fill}88`);
@@ -356,9 +280,10 @@
 		const barCount = 32;
 		return Array.from({ length: barCount }, (_, index) => {
 			const position = index / (barCount - 1);
-			const contour = 0.36 + 0.35 * Math.sin(position * Math.PI * 0.9) ** 2;
-			const pulse = 0.1 * Math.sin(index * 1.7) ** 2;
-			return Math.min(0.92, contour + pulse);
+			// Mild contour leaves headroom for strong EQ boosts before shared normalization.
+			const contour = 0.28 + 0.22 * Math.sin(position * Math.PI * 0.9) ** 2;
+			const pulse = 0.06 * Math.sin(index * 1.7) ** 2;
+			return contour + pulse;
 		});
 	}
 
@@ -395,7 +320,8 @@
 
 	function computeLiveShapedBars(signature: Signature, rawBars: number[]) {
 		const mult = eqMultipliers(signature);
-		return rawBars.map((value, index) => Math.min(1, Math.max(0.03, value * (mult[index] ?? 1))));
+		// Keep linear gain intact; drawSpectrumBars normalizes by shared peak.
+		return rawBars.map((value, index) => Math.max(0.02, value * (mult[index] ?? 1)));
 	}
 
 	function updateSignalCanvases() {
@@ -419,7 +345,6 @@
 			tile.setAttribute('aria-pressed', String(active));
 		});
 		applySignatureEq(signature);
-		drawChart();
 		if (!monitorRunning) {
 			updateSignalCanvases();
 			playbackStatus.textContent = `${signature.name} selected. Press Start listening to hear its transformation.`;
@@ -462,7 +387,7 @@
 		const curveCanvas = document.createElement('canvas');
 		curveCanvas.className = 'curve-canvas';
 		curveCanvas.style.width = '100%';
-		curveCanvas.style.height = '48px';
+		curveCanvas.style.height = '88px';
 		curveCanvas.style.display = 'block';
 		curveCanvas.setAttribute('aria-label', `${signature.name} filter curve: ${signature.eqSummary}`);
 		curveCanvases.set(signature.id, curveCanvas);
@@ -476,7 +401,7 @@
 		const signalCanvas = document.createElement('canvas');
 		signalCanvas.className = 'signal-canvas';
 		signalCanvas.style.width = '100%';
-		signalCanvas.style.height = '48px';
+		signalCanvas.style.height = '88px';
 		signalCanvas.style.display = 'block';
 		signalCanvas.setAttribute('aria-label', `${signature.name} grouped bar chart comparing original and processed live signal`);
 		signalCanvases.set(signature.id, signalCanvas);
@@ -505,21 +430,40 @@
 		if (!monitorRunning) updateSignalCanvases();
 	}
 
+	function disposeToneGraph() {
+		toneParts.forEach((part) => {
+			part.stop();
+			part.dispose();
+		});
+		toneParts = [];
+		toneNodes.forEach((node) => node.dispose());
+		toneNodes = [];
+		mixBus?.dispose();
+		mixBus = null;
+		Tone.Transport.stop();
+		Tone.Transport.cancel(0);
+		Tone.Transport.position = 0;
+	}
+
 	function stopSignal(announce = true) {
-		if (!audioContext) return;
-		const now = audioContext.currentTime;
+		if (!monitorRunning && !audioContext) return;
+		const now = audioContext?.currentTime ?? 0;
 		masterGain?.gain.cancelScheduledValues(now);
-		if (masterGain) {
+		if (masterGain && audioContext) {
 			masterGain.gain.setValueAtTime(masterGain.gain.value, now);
 			masterGain.gain.linearRampToValueAtTime(0, now + 0.03);
 		}
-		scheduledSources.forEach((source) => source.stop(now + 0.04));
-		scheduledSources = [];
+		disposeToneGraph();
+		if (masterGain && eqFilters[0]) {
+			try { masterGain.disconnect(); } catch { /* already disconnected */ }
+			try { eqFilters[0].disconnect(); } catch { /* already disconnected */ }
+		}
+		analyserSink?.disconnect();
+		rawAnalyser?.disconnect();
 		masterGain = null;
-		eqInput = null;
 		eqFilters = [];
 		rawAnalyser = null;
-		window.clearTimeout(sequenceTimer);
+		analyserSink = null;
 		monitorRunning = false;
 		cancelAnimationFrame(monitorFrame);
 		updateSignalCanvases();
@@ -537,106 +481,297 @@
 		});
 	}
 
-	function makeVoice(frequency: number, type: OscillatorType, duration: number, level: number, part: string, bend = 0) {
-		if (!audioContext || !eqInput) return;
-		const context = audioContext;
-		const now = context.currentTime;
-		const oscillator = context.createOscillator();
-		const noteGain = context.createGain();
-		const tone = context.createBiquadFilter();
-		tone.type = 'lowpass';
-		tone.frequency.setValueAtTime(part === 'air' ? 16000 : part === 'bass' ? 420 : 12000, now);
-		oscillator.type = type;
-		oscillator.frequency.setValueAtTime(frequency, now);
-		if (bend) oscillator.frequency.exponentialRampToValueAtTime(Math.max(20, frequency + bend), now + duration * 0.55);
-		noteGain.gain.setValueAtTime(0, now);
-		noteGain.gain.linearRampToValueAtTime(level, now + 0.018);
-		noteGain.gain.exponentialRampToValueAtTime(0.001, now + duration);
-		oscillator.connect(noteGain);
-		noteGain.connect(tone);
-		tone.connect(eqInput);
-		oscillator.start(now);
-		oscillator.stop(now + duration + 0.02);
-		scheduledSources.push(oscillator);
-		oscillator.addEventListener('ended', () => {
-			scheduledSources = scheduledSources.filter((source) => source !== oscillator);
-		});
+	function trackNode<T extends Tone.ToneAudioNode>(node: T): T {
+		toneNodes.push(node);
+		return node;
 	}
 
-	function makeNoiseVoice(frequency: number, duration: number, level: number) {
-		if (!audioContext || !eqInput) return;
-		const context = audioContext;
-		const now = context.currentTime;
-		const frameCount = Math.ceil(context.sampleRate * duration);
-		const buffer = context.createBuffer(1, frameCount, context.sampleRate);
-		const data = buffer.getChannelData(0);
-		for (let index = 0; index < frameCount; index++) data[index] = Math.random() * 2 - 1;
-		const source = context.createBufferSource();
-		const band = context.createBiquadFilter();
-		const noteGain = context.createGain();
-		source.buffer = buffer;
-		band.type = 'bandpass';
-		band.frequency.setValueAtTime(frequency, now);
-		band.Q.setValueAtTime(0.35, now);
-		noteGain.gain.setValueAtTime(0, now);
-		noteGain.gain.linearRampToValueAtTime(level, now + 0.012);
-		noteGain.gain.exponentialRampToValueAtTime(0.001, now + duration);
-		source.connect(band);
-		band.connect(noteGain);
-		noteGain.connect(eqInput);
-		source.start(now);
-		scheduledSources.push(source);
-		source.addEventListener('ended', () => {
-			scheduledSources = scheduledSources.filter((scheduled) => scheduled !== source);
-		});
+	function trackPart<T extends Tone.Sequence | Tone.Part | Tone.Loop>(part: T): T {
+		toneParts.push(part);
+		return part;
 	}
 
-	function scheduleMelodyNote() {
-		if (!audioContext || !eqInput) return;
-		const step = sequenceIndex % 16;
-		const phrase = Math.floor(sequenceIndex / 16);
-		const interval = 60000 / activePreset.tempo / 2;
+	function connectToBus(node: Tone.ToneAudioNode) {
+		if (!mixBus) return;
+		node.connect(mixBus);
+	}
+
+	function buildEdmPreset() {
+		const kick = trackNode(new Tone.MembraneSynth({
+			pitchDecay: 0.05,
+			octaves: 6,
+			oscillator: { type: 'sine' },
+			envelope: { attack: 0.001, decay: 0.28, sustain: 0.01, release: 0.18 },
+		}));
+		const bass = trackNode(new Tone.MonoSynth({
+			oscillator: { type: 'sawtooth' },
+			filter: { type: 'lowpass', Q: 2, rolloff: -24 },
+			filterEnvelope: { attack: 0.01, decay: 0.12, sustain: 0.2, release: 0.12, baseFrequency: 80, octaves: 2.2 },
+			envelope: { attack: 0.01, decay: 0.18, sustain: 0.25, release: 0.12 },
+		}));
+		const pad = trackNode(new Tone.PolySynth(Tone.Synth, {
+			oscillator: { type: 'fatsawtooth', count: 3, spread: 18 },
+			envelope: { attack: 0.08, decay: 0.2, sustain: 0.45, release: 0.35 },
+		}));
+		const lead = trackNode(new Tone.Synth({
+			oscillator: { type: 'square' },
+			envelope: { attack: 0.005, decay: 0.12, sustain: 0.15, release: 0.1 },
+		}));
+		const hat = trackNode(new Tone.NoiseSynth({
+			noise: { type: 'white' },
+			envelope: { attack: 0.001, decay: 0.05, sustain: 0, release: 0.02 },
+		}));
+		const clap = trackNode(new Tone.NoiseSynth({
+			noise: { type: 'pink' },
+			envelope: { attack: 0.001, decay: 0.16, sustain: 0, release: 0.05 },
+		}));
+
+		const kickGain = trackNode(new Tone.Gain(0.9));
+		const bassGain = trackNode(new Tone.Gain(0.28));
+		const padGain = trackNode(new Tone.Gain(0.12));
+		const leadGain = trackNode(new Tone.Gain(0.11));
+		const hatGain = trackNode(new Tone.Gain(0.05));
+		const clapGain = trackNode(new Tone.Gain(0.08));
+		const delay = trackNode(new Tone.FeedbackDelay('8n', 0.18));
+		const reverb = trackNode(new Tone.Reverb({ decay: 1.6, wet: 0.12 }));
+
+		kick.connect(kickGain);
+		bass.connect(bassGain);
+		pad.connect(padGain);
+		lead.chain(delay, leadGain);
+		hat.connect(hatGain);
+		clap.connect(clapGain);
+		[kickGain, bassGain, padGain, leadGain, hatGain, clapGain].forEach((gain) => gain.chain(reverb, mixBus!));
+
+		const bassNotes = ['A1', 'A1', 'A1', 'A1', 'C2', 'C2', 'C2', 'C2', 'G1', 'G1', 'G1', 'G1', 'D2', 'D2', 'D2', 'D2'];
+		const leadNotes = ['A4', null, 'C5', 'E5', 'A4', null, 'G4', 'C5', 'E5', null, 'G5', 'A5', 'G5', 'E5', 'C5', 'A4'];
 		const chords = [
-			[293.66, 369.99, 440, 554.37],
-			[246.94, 293.66, 369.99, 440],
-			[196, 246.94, 293.66, 369.99],
-			[220, 246.94, 329.63, 440],
+			['A3', 'C4', 'E4', 'G4'],
+			['C4', 'E4', 'G4', 'B4'],
+			['G3', 'B3', 'D4', 'F4'],
+			['D4', 'F4', 'A4', 'C5'],
 		];
-		const melody = activePreset.melody;
-		const chord = chords[Math.floor(step / 4)];
 
-		if (step % 4 === 0) {
-			chord.forEach((frequency) => {
-				makeVoice(frequency, activePreset.chordType, (interval * 3.6) / 1000, 0.06, 'vocal');
-				makeVoice(frequency * 2, 'sine', (interval * 2.5) / 1000, 0.025, 'vocal');
-			});
-		}
-		if (step % 2 === 0) makeVoice(activePreset.bass[step], 'sine', (interval * 1.5) / 1000, 0.14, 'bass', -activePreset.bass[step] * 0.16);
-		makeVoice(melody[step], 'triangle', (interval * 1.35) / 1000, 0.07, 'vocal');
-		makeVoice(melody[step], 'sawtooth', (interval * 0.8) / 1000, 0.026, 'air');
-		makeVoice(melody[step] * 2, 'sine', (interval * 0.85) / 1000, 0.025, 'vocal');
-		if (step % 4 === 2) makeVoice(melody[step] * 3, 'sine', (interval * 0.42) / 1000, 0.012, 'air');
-		if (step % 4 === 1) makeNoiseVoice([250, 700, 1800, 4200][phrase % 4], (interval * 0.75) / 1000, 0.024);
-		if (step % 4 === 3) makeNoiseVoice([4200, 6500, 8500, 11000][phrase % 4], (interval * 0.5) / 1000, 0.022);
-		if (step % 2 === 1) makeVoice(3300 + step * 35, 'sine', (interval * 0.28) / 1000, 0.038, 'air');
-		if (step % 4 === 0 || step % 4 === 2) makeVoice(120, 'sine', (interval * 0.34) / 1000, 0.1, 'bass', -74);
+		trackPart(new Tone.Sequence((time, note) => {
+			kick.triggerAttackRelease('C1', '8n', time, 0.95);
+			if (note) bass.triggerAttackRelease(note, '8n', time, 0.8);
+		}, bassNotes, '8n').start(0));
 
-		sequenceIndex++;
-		sequenceTimer = window.setTimeout(scheduleMelodyNote, interval);
+		trackPart(new Tone.Sequence((time, step) => {
+			if (step % 2 === 1) hat.triggerAttackRelease('16n', time, 0.35);
+			if (step % 4 === 2) clap.triggerAttackRelease('8n', time, 0.55);
+			if (step % 8 === 0) pad.triggerAttackRelease(chords[Math.floor(step / 4) % chords.length], '2n', time, 0.35);
+			const leadNote = leadNotes[step];
+			if (leadNote) lead.triggerAttackRelease(leadNote, '16n', time, 0.45);
+		}, Array.from({ length: 16 }, (_, i) => i), '8n').start(0));
+	}
+
+	function buildLofiPreset() {
+		const keys = trackNode(new Tone.PolySynth(Tone.Synth, {
+			oscillator: { type: 'triangle' },
+			envelope: { attack: 0.04, decay: 0.35, sustain: 0.4, release: 0.8 },
+		}));
+		const bass = trackNode(new Tone.MonoSynth({
+			oscillator: { type: 'triangle' },
+			filter: { type: 'lowpass', Q: 1, rolloff: -12 },
+			filterEnvelope: { attack: 0.02, decay: 0.2, sustain: 0.3, release: 0.3, baseFrequency: 90, octaves: 1.5 },
+			envelope: { attack: 0.02, decay: 0.25, sustain: 0.3, release: 0.35 },
+		}));
+		const lead = trackNode(new Tone.Synth({
+			oscillator: { type: 'sine' },
+			envelope: { attack: 0.01, decay: 0.25, sustain: 0.15, release: 0.4 },
+		}));
+		const kick = trackNode(new Tone.MembraneSynth({
+			pitchDecay: 0.03,
+			octaves: 3.5,
+			envelope: { attack: 0.001, decay: 0.25, sustain: 0, release: 0.15 },
+		}));
+		const snare = trackNode(new Tone.NoiseSynth({
+			noise: { type: 'brown' },
+			envelope: { attack: 0.001, decay: 0.18, sustain: 0, release: 0.08 },
+		}));
+		const dust = trackNode(new Tone.NoiseSynth({
+			noise: { type: 'pink' },
+			envelope: { attack: 0.2, decay: 0.8, sustain: 0.15, release: 0.6 },
+		}));
+
+		const filter = trackNode(new Tone.Filter(2200, 'lowpass'));
+		const chorus = trackNode(new Tone.Chorus(2.5, 1.8, 0.35).start());
+		const reverb = trackNode(new Tone.Reverb({ decay: 2.4, wet: 0.22 }));
+		const keysGain = trackNode(new Tone.Gain(0.16));
+		const bassGain = trackNode(new Tone.Gain(0.2));
+		const leadGain = trackNode(new Tone.Gain(0.1));
+		const kickGain = trackNode(new Tone.Gain(0.55));
+		const snareGain = trackNode(new Tone.Gain(0.08));
+		const dustGain = trackNode(new Tone.Gain(0.03));
+
+		keys.chain(chorus, filter, keysGain, reverb, mixBus!);
+		bass.chain(bassGain, mixBus!);
+		lead.chain(filter, leadGain, reverb, mixBus!);
+		kick.connect(kickGain);
+		snare.connect(snareGain);
+		dust.connect(dustGain);
+		[kickGain, snareGain, dustGain].forEach((gain) => connectToBus(gain));
+
+		const chords = [
+			['F3', 'Ab3', 'C4', 'Eb4'],
+			['Db3', 'F3', 'Ab3', 'C4'],
+			['Eb3', 'G3', 'Bb3', 'Db4'],
+			['Ab2', 'C3', 'Eb3', 'G3'],
+		];
+		const bassNotes = ['F2', null, 'F2', 'Ab2', null, 'Db2', null, 'Eb2', 'Ab2', null, 'Ab2', 'C3', null, 'Eb2', 'F2', null];
+		const leadNotes = ['C5', null, 'Eb5', 'F5', null, 'Eb5', 'C5', null, 'Ab4', 'C5', null, 'F5', 'G5', null, 'F5', 'Eb5'];
+
+		Tone.Transport.swing = 0.18;
+		Tone.Transport.swingSubdivision = '8n';
+
+		trackPart(new Tone.Sequence((time, step) => {
+			if (step % 4 === 0) {
+				keys.triggerAttackRelease(chords[Math.floor(step / 4) % chords.length], '2n', time, 0.4);
+				dust.triggerAttackRelease('4n', time, 0.2);
+			}
+			if (step % 8 === 0) kick.triggerAttackRelease('C1', '8n', time, 0.7);
+			if (step % 8 === 4) snare.triggerAttackRelease('8n', time, 0.4);
+			const bassNote = bassNotes[step];
+			if (bassNote) bass.triggerAttackRelease(bassNote, '8n', time, 0.55);
+			const leadNote = leadNotes[step];
+			if (leadNote) lead.triggerAttackRelease(leadNote, '8n', time, 0.35);
+		}, Array.from({ length: 16 }, (_, i) => i), '8n').start(0));
+	}
+
+	function buildAmbientPreset() {
+		const pad = trackNode(new Tone.PolySynth(Tone.Synth, {
+			oscillator: { type: 'sine' },
+			envelope: { attack: 1.2, decay: 1.5, sustain: 0.7, release: 2.5 },
+		}));
+		const drone = trackNode(new Tone.MonoSynth({
+			oscillator: { type: 'sine' },
+			filter: { type: 'lowpass', Q: 0.5, rolloff: -12 },
+			filterEnvelope: { attack: 1, decay: 1, sustain: 0.8, release: 2, baseFrequency: 60, octaves: 1 },
+			envelope: { attack: 1.5, decay: 1, sustain: 0.8, release: 2.5 },
+		}));
+		const bell = trackNode(new Tone.FMSynth({
+			modulationIndex: 8,
+			oscillator: { type: 'sine' },
+			modulation: { type: 'sine' },
+			envelope: { attack: 0.01, decay: 1.2, sustain: 0.05, release: 1.4 },
+			modulationEnvelope: { attack: 0.01, decay: 0.6, sustain: 0.1, release: 0.8 },
+		}));
+		const air = trackNode(new Tone.NoiseSynth({
+			noise: { type: 'pink' },
+			envelope: { attack: 1.5, decay: 2, sustain: 0.2, release: 2 },
+		}));
+
+		const reverb = trackNode(new Tone.Reverb({ decay: 6, wet: 0.45 }));
+		const delay = trackNode(new Tone.FeedbackDelay('4n', 0.28));
+		const filter = trackNode(new Tone.Filter(1800, 'lowpass'));
+		const padGain = trackNode(new Tone.Gain(0.12));
+		const droneGain = trackNode(new Tone.Gain(0.16));
+		const bellGain = trackNode(new Tone.Gain(0.07));
+		const airGain = trackNode(new Tone.Gain(0.025));
+
+		pad.chain(filter, padGain, reverb, mixBus!);
+		drone.chain(droneGain, reverb, mixBus!);
+		bell.chain(delay, bellGain, reverb, mixBus!);
+		air.chain(airGain, reverb, mixBus!);
+
+		const pads = [
+			['A2', 'E3', 'B3', 'C#4'],
+			['F#2', 'C#3', 'A3', 'B3'],
+			['D2', 'A2', 'F#3', 'A3'],
+			['E2', 'B2', 'G#3', 'B3'],
+		];
+		const drones = ['A1', 'F#1', 'D1', 'E1'];
+		const bells = ['E5', null, null, null, 'F#5', null, null, 'A5', null, null, 'C#5', null, null, 'B4', null, null];
+
+		trackPart(new Tone.Sequence((time, step) => {
+			if (step % 8 === 0) {
+				const idx = Math.floor(step / 8) % pads.length;
+				pad.triggerAttackRelease(pads[idx], '1m', time, 0.35);
+				drone.triggerAttackRelease(drones[idx], '1m', time, 0.45);
+				air.triggerAttackRelease('2n', time, 0.15);
+			}
+			const bellNote = bells[step];
+			if (bellNote) bell.triggerAttackRelease(bellNote, '2n', time, 0.3);
+		}, Array.from({ length: 16 }, (_, i) => i), '4n').start(0));
+	}
+
+	function buildArpPreset() {
+		const arp = trackNode(new Tone.Synth({
+			oscillator: { type: 'square' },
+			envelope: { attack: 0.005, decay: 0.12, sustain: 0.1, release: 0.12 },
+		}));
+		const bass = trackNode(new Tone.MonoSynth({
+			oscillator: { type: 'triangle' },
+			filter: { type: 'lowpass', Q: 1.2, rolloff: -24 },
+			filterEnvelope: { attack: 0.01, decay: 0.15, sustain: 0.2, release: 0.15, baseFrequency: 70, octaves: 2 },
+			envelope: { attack: 0.01, decay: 0.15, sustain: 0.2, release: 0.15 },
+		}));
+		const pluck = trackNode(new Tone.PluckSynth({ attackNoise: 0.8, dampening: 4200, resonance: 0.85 }));
+		const hat = trackNode(new Tone.MetalSynth({
+			envelope: { attack: 0.001, decay: 0.08, release: 0.02 },
+			harmonicity: 4.5,
+			modulationIndex: 20,
+			resonance: 3000,
+			octaves: 1.2,
+		}));
+
+		const delay = trackNode(new Tone.PingPongDelay('16n', 0.22));
+		const reverb = trackNode(new Tone.Reverb({ decay: 1.8, wet: 0.18 }));
+		const arpGain = trackNode(new Tone.Gain(0.1));
+		const bassGain = trackNode(new Tone.Gain(0.22));
+		const pluckGain = trackNode(new Tone.Gain(0.12));
+		const hatGain = trackNode(new Tone.Gain(0.03));
+
+		arp.chain(delay, arpGain, reverb, mixBus!);
+		bass.chain(bassGain, mixBus!);
+		pluck.chain(pluckGain, reverb, mixBus!);
+		hat.chain(hatGain, mixBus!);
+
+		const patterns = [
+			['C4', 'E4', 'G4', 'C5', 'E5', 'G4', 'E4', 'C4'],
+			['A3', 'C4', 'E4', 'A4', 'C5', 'E4', 'C4', 'A3'],
+			['F3', 'A3', 'C4', 'F4', 'A4', 'C4', 'A3', 'F3'],
+			['G3', 'B3', 'D4', 'G4', 'B4', 'D4', 'B3', 'G3'],
+		];
+		const bassNotes = ['C2', null, 'C2', null, 'A1', null, 'A1', null, 'F1', null, 'F1', null, 'G1', null, 'G1', null];
+
+		trackPart(new Tone.Sequence((time, step) => {
+			const pattern = patterns[Math.floor(step / 8) % patterns.length];
+			const note = pattern[step % pattern.length];
+			arp.triggerAttackRelease(note, '16n', time, 0.45);
+			if (step % 2 === 0) pluck.triggerAttack(note, time);
+			const bassNote = bassNotes[step % bassNotes.length];
+			if (bassNote) bass.triggerAttackRelease(bassNote, '8n', time, 0.6);
+			if (step % 2 === 1) hat.triggerAttackRelease('16n', time, 0.15);
+		}, Array.from({ length: 16 }, (_, i) => i), '16n').start(0));
+	}
+
+	function buildPreset(preset: MusicPreset) {
+		disposeToneGraph();
+		mixBus = trackNode(new Tone.Gain(1));
+		if (eqFilters[0]) mixBus.connect(eqFilters[0]);
+		if (rawAnalyser) mixBus.connect(rawAnalyser);
+
+		Tone.Transport.bpm.value = preset.tempo;
+		Tone.Transport.swing = 0;
+		if (preset.id === 'edm') buildEdmPreset();
+		else if (preset.id === 'lofi') buildLofiPreset();
+		else if (preset.id === 'ambient') buildAmbientPreset();
+		else buildArpPreset();
 	}
 
 	async function playSignal() {
 		stopSignal(false);
-		audioContext ??= new AudioContext();
-		await audioContext.resume();
+		await Tone.start();
+		audioContext = Tone.getContext().rawContext as AudioContext;
 		const context = audioContext;
 		const now = context.currentTime;
 
-		eqInput = context.createGain();
 		masterGain = context.createGain();
 		const level = Number(volume.value) / 100;
 		masterGain.gain.setValueAtTime(0, now);
-		masterGain.gain.linearRampToValueAtTime(level, now + 0.04);
+		masterGain.gain.linearRampToValueAtTime(level, now + 0.05);
 
 		const filterSpecs: Array<[BiquadFilterType, number, number?]> = [
 			['lowshelf', 100],
@@ -653,7 +788,6 @@
 			filter.gain.setValueAtTime(selected.eq[index], now);
 			return filter;
 		});
-		eqInput.connect(eqFilters[0]);
 		eqFilters.forEach((filter, index) => {
 			if (index < eqFilters.length - 1) filter.connect(eqFilters[index + 1]);
 		});
@@ -663,21 +797,21 @@
 		rawAnalyser = context.createAnalyser();
 		rawAnalyser.fftSize = 256;
 		rawAnalyser.smoothingTimeConstant = 0.8;
-		const sink = context.createGain();
-		sink.gain.setValueAtTime(0, now);
-		eqInput.connect(rawAnalyser);
-		rawAnalyser.connect(sink);
-		sink.connect(context.destination);
+		analyserSink = context.createGain();
+		analyserSink.gain.setValueAtTime(0, now);
+		rawAnalyser.connect(analyserSink);
+		analyserSink.connect(context.destination);
 
 		liveBarFreqs = getBarFrequencies(context.sampleRate);
 		eqMultCache.clear();
 
+		buildPreset(activePreset);
+		Tone.Transport.start('+0.05');
+
 		monitorRunning = true;
-		sequenceIndex = 0;
 		cancelAnimationFrame(monitorFrame);
 		monitorFrame = requestAnimationFrame(updateSignalCanvases);
-		playbackStatus.textContent = `Playing the ${selected.name.toLowerCase()} transformation. Select another signature to hear it immediately.`;
-		scheduleMelodyNote();
+		playbackStatus.textContent = `Playing the ${selected.name.toLowerCase()} transformation with the ${activePreset.name} preset.`;
 		toggleButton.textContent = 'Stop listening';
 	}
 
@@ -688,15 +822,22 @@
 
 	function selectMusicPreset(preset: MusicPreset) {
 		activePreset = preset;
-		sequenceIndex = 0;
 		presetButtons.forEach((button) => {
 			const active = button.dataset.preset === preset.id;
 			button.classList.toggle('active', active);
 			button.setAttribute('aria-pressed', String(active));
 		});
 		if (monitorRunning) {
-			window.clearTimeout(sequenceTimer);
-			scheduleMelodyNote();
+			const wasRunning = monitorRunning;
+			const currentLevel = masterGain?.gain.value ?? Number(volume.value) / 100;
+			buildPreset(preset);
+			if (wasRunning) {
+				Tone.Transport.start();
+				if (masterGain && audioContext) {
+					const now = audioContext.currentTime;
+					masterGain.gain.setValueAtTime(currentLevel, now);
+				}
+			}
 			playbackStatus.textContent = `${preset.name} preset selected. The ${selected.name.toLowerCase()} transformation remains active.`;
 		} else {
 			playbackStatus.textContent = `${preset.name} preset selected. Press Start listening to hear the ${selected.name.toLowerCase()} transformation.`;
@@ -711,9 +852,6 @@
 			if (preset) selectMusicPreset(preset);
 		});
 	});
-
-	const chartResizeObserver = new ResizeObserver(drawChart);
-	chartResizeObserver.observe(canvas.parentElement!);
 
 	let resizeQueued = false;
 	const gridResizeObserver = new ResizeObserver(() => {
@@ -735,9 +873,9 @@
 
 	document.addEventListener('astro:before-swap', () => {
 		stopSignal(false);
-		chartResizeObserver.disconnect();
 		gridResizeObserver.disconnect();
-		audioContext?.close();
+		disposeToneGraph();
+		Tone.getContext().dispose();
 		audioContext = null;
 		analysisContext?.close();
 		analysisContext = null;
@@ -782,10 +920,10 @@
 	}
 
 	.summary {
-		max-width: 18rem;
+		max-width: 22rem;
 		margin: 0;
 		color: var(--lab-muted);
-		font-size: 0.8rem;
+		font-size: 0.86rem;
 		line-height: 1.5;
 		text-align: right;
 	}
@@ -796,56 +934,27 @@
 		outline-offset: 3px;
 	}
 
-	.chart-wrap {
-		height: 300px;
-		margin-top: 1.25rem;
-		border: 1px solid rgba(160, 187, 230, 0.1);
-		border-radius: 10px;
-		background: radial-gradient(circle at 50% 50%, rgba(112, 230, 196, 0.08), transparent 70%), #0c1325;
-		overflow: hidden;
-	}
-
-	#response-chart {
-		display: block;
-		width: 100%;
-		height: 100%;
-	}
-
-	.frequency-legend {
-		display: grid;
-		grid-template-columns: repeat(5, 1fr);
-		gap: 0.25rem;
-		margin-top: 0.75rem;
-		color: var(--lab-muted);
-		font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-		font-size: 0.62rem;
-		line-height: 1.45;
-	}
-
-	.frequency-legend span:not(:last-child) {
-		border-right: 1px solid var(--lab-border);
-	}
-
 	.picker-label {
-		margin: 1.75rem 0 0.85rem;
+		margin: 1.25rem 0 1rem;
 		color: var(--lab-muted);
-		font-size: 0.82rem;
+		font-size: 0.88rem;
 		line-height: 1.5;
 	}
 
 	.signature-tiles {
 		display: grid;
-		grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
-		gap: 0.75rem;
+		grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+		gap: 1rem;
 	}
 
 	#sound-signature-lab :global(.sig-tile) {
 		display: flex;
 		flex-direction: column;
-		gap: 0.35rem;
-		padding: 0.9rem;
+		gap: 0.55rem;
+		min-height: 320px;
+		padding: 1.2rem;
 		border: 1px solid var(--lab-border);
-		border-radius: 12px;
+		border-radius: 14px;
 		background: rgba(12, 19, 37, 0.6);
 		color: var(--lab-ink);
 		font: inherit;
@@ -869,21 +978,21 @@
 		display: flex;
 		align-items: center;
 		justify-content: space-between;
-		gap: 0.5rem;
+		gap: 0.65rem;
 	}
 
 	#sound-signature-lab :global(.sig-name) {
 		display: inline-flex;
 		align-items: center;
-		gap: 0.45rem;
-		font-size: 0.95rem;
+		gap: 0.5rem;
+		font-size: 1.1rem;
 		font-weight: 600;
 	}
 
 	#sound-signature-lab :global(.sig-name)::before {
 		content: '';
-		width: 0.6rem;
-		height: 0.6rem;
+		width: 0.7rem;
+		height: 0.7rem;
 		border-radius: 50%;
 		background: var(--sig-color);
 		box-shadow: 0 0 8px var(--sig-color);
@@ -891,7 +1000,7 @@
 
 	#sound-signature-lab :global(.sig-type) {
 		color: var(--sig-color);
-		font-size: 0.6rem;
+		font-size: 0.68rem;
 		font-weight: 600;
 		letter-spacing: 0.05em;
 		text-transform: uppercase;
@@ -899,34 +1008,36 @@
 	}
 
 	#sound-signature-lab :global(.sig-eq) {
-		margin-bottom: 0.35rem;
+		margin-bottom: 0.2rem;
 		color: var(--lab-muted);
 		font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-		font-size: 0.6rem;
+		font-size: 0.72rem;
 	}
 
 	#sound-signature-lab :global(.viz) {
 		display: flex;
+		flex: 1;
 		flex-direction: column;
-		gap: 0.5rem;
+		gap: 0.7rem;
 	}
 
 	#sound-signature-lab :global(.viz-item) {
 		display: flex;
+		flex: 1;
 		flex-direction: column;
-		gap: 0.22rem;
+		gap: 0.3rem;
 	}
 
 	#sound-signature-lab :global(.viz-label) {
 		color: var(--lab-muted);
-		font-size: 0.53rem;
+		font-size: 0.6rem;
 		letter-spacing: 0.09em;
 		text-transform: uppercase;
 	}
 
 	#sound-signature-lab :global(.curve-canvas),
 	#sound-signature-lab :global(.signal-canvas) {
-		border-radius: 4px;
+		border-radius: 6px;
 	}
 
 	.controls {
@@ -1067,22 +1178,15 @@
 			text-align: left;
 		}
 
-		.chart-wrap {
-			height: 240px;
-		}
-
-		.frequency-legend {
-			font-size: 0.55rem;
-		}
-
-		.frequency-legend span {
-			overflow-wrap: anywhere;
-		}
-
 		.signature-tiles {
 			grid-template-columns: 1fr;
+			gap: 0.85rem;
 		}
 
+		#sound-signature-lab :global(.sig-tile) {
+			min-height: 280px;
+			padding: 1rem;
+		}
 	}
 
 	@media (max-width: 680px) {
